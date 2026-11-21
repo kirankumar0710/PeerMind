@@ -6,8 +6,9 @@ const roleDefaults = (provider) => ({
   model: '',
   maxOutputTokens: 8192,
   contextWindow: 128000,
-  reasoning: false,   // request reasoning/thinking stream (model must support it)
-  imageInput: false,  // capability registry: never assumed (§6.1)
+  // Reasoning streams and image input are detected from the model, not configured.
+  // The only user choice: Claude extended thinking (changes cost and output).
+  extendedThinking: false,
 });
 
 export const DEFAULT_SETTINGS = Object.freeze({

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
-    "icons": "node tools/make-icons.mjs",
+    "icons": "python3 tools/make-icons.py",
     "check:compat": "node tools/check-compat.mjs",
     "package": "node tools/package.mjs"
   },

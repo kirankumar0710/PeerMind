@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ADAPTERS, classifyOpenAiModel, classifyAnthropicModel, classifyGeminiModel } from '../src/providers/adapters.js';
+import {
+  ADAPTERS, classifyOpenAiModel, classifyAnthropicModel, classifyGeminiModel,
+  openAiCapabilities, anthropicCapabilities, geminiCapabilities,
+} from '../src/providers/adapters.js';
 
 test('OpenAI: chat/reasoning models supported; audio, image, embedding models not', () => {
   for (const id of ['gpt-4.1', 'gpt-4o-mini', 'o3', 'o4-mini', 'chatgpt-4o-latest']) assert.equal(classifyOpenAiModel(id).supported, true, id);
@@ -23,6 +26,26 @@ test('Gemini: requires generateContent and a text model', () => {
   assert.equal(classifyGeminiModel('text-embedding-004', ['embedContent']).supported, false);
   assert.equal(classifyGeminiModel('gemini-2.5-flash-preview-tts', ['generateContent']).supported, false);
   assert.equal(classifyGeminiModel('imagen-3.0-generate-002', ['predict']).supported, false);
+});
+
+test('capabilities are detected from the model ID', () => {
+  assert.deepEqual(openAiCapabilities('o3'), { reasoning: true, imageInput: true, thinkingIsOptional: false });
+  assert.deepEqual(openAiCapabilities('o3-mini'), { reasoning: true, imageInput: false, thinkingIsOptional: false });
+  assert.deepEqual(openAiCapabilities('gpt-4o-mini'), { reasoning: false, imageInput: true, thinkingIsOptional: false });
+  assert.equal(openAiCapabilities('gpt-3.5-turbo').imageInput, false);
+
+  assert.equal(anthropicCapabilities('claude-3-7-sonnet-20250219').reasoning, true);
+  assert.equal(anthropicCapabilities('claude-3-5-sonnet-20241022').reasoning, false);
+  assert.equal(anthropicCapabilities('claude-3-5-sonnet-20241022').imageInput, true);
+  assert.equal(anthropicCapabilities('claude-sonnet-4-5').reasoning, true);
+  assert.equal(anthropicCapabilities('claude-opus-4-1-20250805').reasoning, true);
+  assert.equal(anthropicCapabilities('claude-2.1').imageInput, false);
+  assert.equal(anthropicCapabilities('claude-sonnet-4-5').thinkingIsOptional, true);
+
+  assert.equal(geminiCapabilities('gemini-2.5-pro').reasoning, true);
+  assert.equal(geminiCapabilities('gemini-2.0-flash').reasoning, false);
+  assert.equal(geminiCapabilities('gemini-2.0-flash').imageInput, true);
+  assert.equal(geminiCapabilities('gemma-3-27b-it').imageInput, false); // unrecognised → not assumed
 });
 
 test('listModels returns every model the key can access, classified and sorted supported-first', async () => {
