@@ -1,0 +1,67 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --border: #dcdfe4;
+  --text: #1c1f24;
+  --muted: #5d6470;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
+  --g: #2563eb;
+  --r: #ea580c;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c; --surface: #1f2228; --border: #343842; --text: #e6e8eb; --muted: #9aa1ad;
+    --accent: #60a5fa; --accent-text: #0b1220; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+    --g: #60a5fa; --r: #fb923c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.topbar { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 12px 0; }
+.brand { font-weight: 650; font-size: 15px; }
+.tagline { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
+.tabs { display: flex; gap: 4px; margin-top: 6px; }
+.tabs button { border: 0; background: none; color: var(--muted); padding: 6px 10px; border-bottom: 2px solid transparent; cursor: pointer; font: inherit; }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+main { padding: 12px; }
+section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+h2 { font-size: 13px; margin: 0 0 8px; }
+h3 { font-size: 12px; margin: 10px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+label { display: block; margin: 6px 0 2px; color: var(--muted); font-size: 12px; }
+input, select, textarea { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+input[type="checkbox"] { width: auto; }
+textarea { min-height: 80px; resize: vertical; }
+button { font: inherit; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.info { color: var(--muted); }
+.role-g { color: var(--g); font-weight: 600; } .role-r { color: var(--r); font-weight: 600; }
+.banner { margin: 8px 12px 0; padding: 8px 10px; border-radius: 6px; font-weight: 600; border: 1px solid; }
+.banner.warn { color: var(--warn); } .banner.bad { color: var(--bad); } .banner.info { color: var(--muted); font-weight: 400; }
+.output { white-space: pre-wrap; word-wrap: break-word; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 50vh; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+details { margin: 4px 0; }
+summary { cursor: pointer; }
+pre { white-space: pre-wrap; word-wrap: break-word; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px; max-height: 40vh; overflow: auto; }
+.thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); }
+.list-item { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+dialog { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); max-width: 420px; }
+dialog::backdrop { background: rgb(0 0 0 / .35); }
+.error { color: var(--bad); }
+.thinking::after { content: "…"; animation: dots 1.2s steps(3) infinite; }
+@keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }

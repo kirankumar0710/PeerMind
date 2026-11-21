@@ -1,0 +1,16 @@
+{
+  "name": "peermind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-vendor AI peer review browser extension (Chromium MV3; Brave primary, Chrome secondary).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "icons": "node tools/make-icons.mjs",
+    "check:compat": "node tools/check-compat.mjs",
+    "package": "node tools/package.mjs"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.0.0"
+  }
+}
