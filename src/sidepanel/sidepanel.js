@@ -89,11 +89,49 @@ async function refresh({ background = false } = {}) {
 let refreshTimer = null;
 const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => refresh({ background: true }), 150); };
 
-const port = chrome.runtime.connect({ name: 'panel' });
-port.onMessage.addListener((evt) => {
-  if (evt.type === 'activity') { ui.thinkingOp = evt.opId; return; }
-  scheduleRefresh();
-});
+// Live connection to the service worker. If the browser stops the worker the port disconnects;
+// reconnecting wakes it, and on start-up it marks a run that lost its worker INTERRUPTED (§5.6).
+const activity = { opId: null, kind: null, at: 0 }; // last stream activity, for the live status line
+function connectPort() {
+  const port = chrome.runtime.connect({ name: 'panel' });
+  port.onMessage.addListener((evt) => {
+    if (evt.type === 'activity') {
+      Object.assign(activity, { opId: evt.opId, kind: evt.kind, at: Date.now() });
+      ui.thinkingOp = evt.opId;
+      return;
+    }
+    scheduleRefresh();
+  });
+  port.onDisconnect.addListener(() => setTimeout(() => { connectPort(); scheduleRefresh(); }, 1000));
+}
+connectPort();
+
+// While a run is executing, poll as a safety net (a missed event must never freeze the panel)
+// and tick the live status line every second.
+setInterval(() => {
+  const run = ui.data?.runs.at(-1);
+  if (run && (run.state === S.RUNNING || run.state === S.PREFLIGHT)) refresh({ background: true });
+}, 5000);
+setInterval(() => {
+  const el = document.getElementById('live-status');
+  if (el) el.textContent = liveStatusText();
+}, 1000);
+
+/** "Waiting for first output · 1m 05s elapsed · thinking 2s ago" for the in-flight operation. */
+function liveStatusText() {
+  const op = ui.data?.operations.filter((o) => o.state === OpState.IN_PROGRESS).at(-1);
+  if (!op) return '';
+  const secs = (ms) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+  };
+  const elapsed = Date.now() - new Date(op.startedAt).getTime();
+  const phase = op.partial ? 'Receiving output' : 'Waiting for first output';
+  const last = activity.opId === op.id && activity.at
+    ? `last ${activity.kind === 'reasoning' ? 'thinking signal' : 'output'} ${secs(Date.now() - activity.at)} ago`
+    : 'no stream activity yet';
+  return `${phase} from ${providerLabel(op.provider)} ${op.model} · ${secs(elapsed)} elapsed · ${last}`;
+}
 
 // ------------------------------------------------------------------ render
 function render() {
@@ -131,7 +169,7 @@ function configSummary() {
     roleLine('role-r', 'Reviewer', s.reviewer),
     sameVendor ? h('div', { class: 'error small' }, 'Generator and Reviewer must be different vendors.') : null,
     h('div', { class: 'small muted' },
-      `Iteration limit ${s.iterationLimit} · max output G ${s.generator.maxOutputTokens} / R ${s.reviewer.maxOutputTokens} tokens`),
+      `Iteration limit ${s.iterationLimit} · max output: Generator ${s.generator.maxOutputTokens} / Reviewer ${s.reviewer.maxOutputTokens} tokens`),
     ui.data ? h('div', { class: 'small muted' },
       `Spend ${money(usage.costUsd)}${usage.costIncomplete ? ' (some costs not available)' : ''} of cap $${ui.data.conversation.capUsd} · estimates may differ slightly from actual charges and a small overshoot of the cap is possible`) : null,
   );
@@ -178,7 +216,13 @@ function runStatusCard(run) {
     actions.push(h('button', { onclick: () => act(() => send('stop', { runId: run.id })) }, 'Abandon'));
   }
   if (st === S.PREFLIGHT || st === S.RUNNING) {
-    explain.push(h('span', { class: 'thinking' }, st === S.PREFLIGHT ? 'Checking providers' : `Working: ${run.cursor.kind.replace('_', ' ').toLowerCase()} (refinements ${run.cursor.refinementsDone}/${run.config?.iterationLimit ?? '?'})`));
+    const step = {
+      G_INITIAL: 'Generator is writing the initial response',
+      R_REVIEW: 'Reviewer is reviewing the response',
+      G_REFINE: 'Generator is refining the response',
+    }[run.cursor.kind] || 'Working';
+    explain.push(h('span', { class: 'thinking' }, st === S.PREFLIGHT ? 'Checking providers' : `${step} (refinements ${run.cursor.refinementsDone}/${run.config?.iterationLimit ?? '?'})`));
+    if (st === S.RUNNING) explain.push(h('span', { id: 'live-status', class: 'muted' }, liveStatusText()));
     actions.push(h('button', { class: 'danger', onclick: () => act(() => send('stop', { runId: run.id })) }, 'Stop'));
   }
   if (st === S.FAILED || st === S.PAUSED_WAITING_FOR_USER) {
@@ -250,16 +294,25 @@ function findingsCard(d, run) {
     h('table', {}, h('thead', {}, h('tr', {}, ...['ID', 'Severity', 'Category', 'Material', 'Status', 'Issue'].map((t) => h('th', {}, t)))), h('tbody', {}, rows)));
 }
 
+// Plain-language labels for the UI; internal codes (G_INITIAL, R_REVIEW, …) are never shown.
+const ROLE_LABEL = { G: 'Generator', R: 'Reviewer' };
+const OP_LABEL = { G_INITIAL: 'Initial response', R_REVIEW: 'Review', G_REFINE: 'Refine message' };
+const REVIEW_STATUS_LABEL = { ISSUES_FOUND: 'Issues found', NO_MATERIAL_ISSUES: 'No material issues' };
+const DECISION_LABEL = { APPLIED: 'Applied', REJECTED: 'Rejected', ALREADY_ADDRESSED: 'Already addressed', NO_CHANGE_NEEDED: 'No change needed' };
+const opLabel = (o) => `${OP_LABEL[o.kind] || o.kind}${o.corrective ? ' (format retry)' : ''}`;
+
 function iterationsCard(d) {
   const items = d.messages.map((m) => {
-    if (m.kind === 'user') return h('details', {}, h('summary', {}, `You · ${time(m.createdAt)}`), h('div', { class: 'output' }, m.text || '(image only)'), m.assetIds?.length ? h('div', { class: 'small muted' }, m.assetIds.join(', ')) : null);
+    if (m.kind === 'user') return h('details', {}, h('summary', {}, `User message · ${time(m.createdAt)}`), h('div', { class: 'output' }, m.text || '(image only)'), m.assetIds?.length ? h('div', { class: 'small muted' }, m.assetIds.join(', ')) : null);
     if (m.kind === 'g_output') {
-      return h('details', {}, h('summary', {}, h('span', { class: 'role-g' }, m.refinementNo ? `G${m.refinementNo} refinement` : 'G0 initial'), ` · ${m.summary}`),
-        m.decisions?.length ? h('table', {}, h('tbody', {}, m.decisions.map((x) => h('tr', {}, h('td', {}, x.finding_id), h('td', {}, x.decision), h('td', {}, x.reason))))) : null,
+      return h('details', {}, h('summary', {}, h('span', { class: 'role-g' }, m.refinementNo ? `Refine message ${m.refinementNo}` : 'Initial response'), ` · ${m.summary}`),
+        m.decisions?.length ? h('table', {},
+          h('thead', {}, h('tr', {}, h('th', {}, 'Finding'), h('th', {}, 'Decision'), h('th', {}, 'Reason'))),
+          h('tbody', {}, m.decisions.map((x) => h('tr', {}, h('td', {}, x.finding_id), h('td', {}, DECISION_LABEL[x.decision] || x.decision), h('td', {}, x.reason))))) : null,
         h('div', { class: 'output' }, m.text));
     }
     if (m.kind === 'r_report') {
-      return h('details', {}, h('summary', {}, h('span', { class: 'role-r' }, m.closing ? 'Closing review' : 'Review'), ` · ${m.status} · ${m.summary}`),
+      return h('details', {}, h('summary', {}, h('span', { class: 'role-r' }, m.closing ? 'Closing review' : 'Review'), ` · ${REVIEW_STATUS_LABEL[m.status] || m.status} · ${m.summary}`),
         h('pre', {}, JSON.stringify(m.findings, null, 2)));
     }
     return null;
@@ -270,7 +323,7 @@ function iterationsCard(d) {
 function timelineCard(d) {
   const usage = summarizeUsage(d.operations);
   const rows = d.operations.map((o) => h('details', {},
-    h('summary', {}, h('span', { class: o.role === 'G' ? 'role-g' : 'role-r' }, o.purpose), ` · ${providerLabel(o.provider)} ${o.model} · ${time(o.startedAt)} · `,
+    h('summary', {}, h('span', { class: o.role === 'G' ? 'role-g' : 'role-r' }, opLabel(o)), ` · ${providerLabel(o.provider)} ${o.model} · ${time(o.startedAt)} · `,
       h('span', { class: `pill ${o.state === OpState.SUCCEEDED ? 'ok' : o.state === OpState.IN_PROGRESS ? 'info' : 'bad'}` }, o.state),
       o.state === OpState.IN_PROGRESS && ui.thinkingOp === o.id ? h('span', { class: 'thinking small' }, ' Thinking') : null),
     h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'} · cost ${money(o.costUsd)}`),
@@ -279,7 +332,7 @@ function timelineCard(d) {
     o.partial && o.state !== OpState.SUCCEEDED ? h('details', {}, h('summary', { class: 'small' }, 'Partial output'), h('pre', {}, o.partial)) : null));
   return h('section', { class: 'card' }, h('h2', {}, 'Timeline'), rows,
     h('h3', {}, 'Usage by role'),
-    ...usage.byRole.map((r) => h('div', { class: 'small' }, `${r.role} · ${providerLabel(r.provider)}: ${r.inputTokens} in / ${r.outputTokens} out · ${r.costIncomplete && !r.costUsd ? 'Not available' : money(r.costUsd)}`)));
+    ...usage.byRole.map((r) => h('div', { class: 'small' }, `${ROLE_LABEL[r.role] || r.role} · ${providerLabel(r.provider)}: ${r.inputTokens} in / ${r.outputTokens} out · ${r.costIncomplete && !r.costUsd ? 'Not available' : money(r.costUsd)}`)));
 }
 
 function promptCard() {
@@ -514,8 +567,8 @@ function renderSettings() {
       h('div', { class: 'small muted' }, 'Keys are masked and held for this browser session only; they are cleared when the browser closes and never appear in prompts, logs or exports.'),
       keyRows),
     h('section', { class: 'card' }, h('h2', {}, 'Roles'),
-      roleSection('generator', 'Generator (G)', 'role-g'),
-      roleSection('reviewer', 'Reviewer (R)', 'role-r')),
+      roleSection('generator', 'Generator', 'role-g'),
+      roleSection('reviewer', 'Reviewer', 'role-r')),
     h('section', { class: 'card' }, h('h2', {}, 'Run settings'),
       h('div', { class: 'row' },
         h('div', { class: 'grow' }, h('label', {}, `Iteration limit (${ITERATION_LIMIT.min}–${ITERATION_LIMIT.max}; closing review not counted)`),

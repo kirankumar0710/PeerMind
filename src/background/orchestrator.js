@@ -567,6 +567,10 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
   });
   emit({ type: 'run', runId: run.id, conversationId: run.conversationId });
 
+  // Diagnostics in the service-worker console: operation, provider and timing only — never keys or content.
+  const t0 = Date.now();
+  const tag = `[PeerMind] ${kind}${corrective ? ' (corrective)' : ''} ${cfg.provider}/${cfg.model}`;
+  console.info(`${tag} started (reasoning stream ${cfg.reasoning ? 'requested' : 'off'})`);
   let lastSave = Date.now();
   let partial = '';
   const adapter = ADAPTERS[cfg.provider];
@@ -597,9 +601,11 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
       // State stays IN_PROGRESS until validation decides SUCCEEDED/FAILED; the result is durably recorded now.
       await s.operations.put({ ...op, partial: result.text, rawResult: result.text, finish: result.finish, usage, costUsd: costUsd(pricing, usage.inputTokens, usage.outputTokens), endedAt: nowIso() });
     });
+    console.info(`${tag} finished in ${Date.now() - t0} ms (${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out, finish: ${result.finish})`);
     return { text: result.text, opId };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError('network', e.message);
+    console.warn(`${tag} failed after ${Date.now() - t0} ms: ${err.kind}: ${err.message}`);
     const usage = err.usage && (err.usage.inputTokens != null || err.usage.outputTokens != null) ? err.usage : null;
     await updateOp(opId, {
       state: OpState.FAILED, partial: err.partial || partial,
