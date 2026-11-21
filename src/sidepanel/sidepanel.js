@@ -13,7 +13,7 @@ import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
   tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '', newTools: {}, outputView: 'formatted', blobUrls: new Map(),
-  error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, saveStatus: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
+  error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, saveStatus: null, keyDrafts: {}, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
 // ------------------------------------------------------------------ helpers
@@ -623,11 +623,28 @@ function renderSettings() {
   }
 
   const keyRows = providers.map((p) => {
-    const input = h('input', { type: 'password', placeholder: ui.app.keys[p.id] ? `Saved: ${ui.app.keys[p.id]}` : 'API key', autocomplete: 'off' });
+    // Unsaved key text lives in panel memory (ui.keyDrafts) so re-renders, e.g. after saving another
+    // provider's key, never clear it. It is never persisted, logged or shown unmasked.
+    const saveBtn = h('button', {
+      disabled: !(ui.keyDrafts[p.id] || '').trim(),
+      onclick: () => act(async () => {
+        await send('setKey', { provider: p.id, key: ui.keyDrafts[p.id] });
+        ui.keyDrafts[p.id] = ''; // only this provider's box is cleared
+        ui.providerMsg[p.id] = 'Key saved for this browser session.';
+      }),
+    }, 'Save');
+    const input = h('input', {
+      type: 'password', placeholder: ui.app.keys[p.id] ? `Saved: ${ui.app.keys[p.id]}` : 'API key', autocomplete: 'off',
+      value: ui.keyDrafts[p.id] || '',
+      oninput: (e) => {
+        ui.keyDrafts[p.id] = e.target.value;
+        saveBtn.disabled = !e.target.value.trim(); // enable Save as soon as something is typed
+      },
+    });
     return h('div', { class: 'list-item' },
       h('div', { style: 'width:110px' }, p.label),
       h('div', { class: 'grow' }, input, ui.providerMsg[p.id] ? h('div', { class: 'small muted' }, ui.providerMsg[p.id]) : null),
-      h('button', { onclick: () => act(async () => { await send('setKey', { provider: p.id, key: input.value }); }) }, 'Save'),
+      saveBtn,
       h('button', { disabled: !ui.app.keys[p.id], onclick: () => act(() => loadModels(p.id)) }, 'Test'),
       h('button', { class: 'danger', disabled: !ui.app.keys[p.id], onclick: () => act(() => send('removeKey', { provider: p.id })) }, 'Remove'));
   });
