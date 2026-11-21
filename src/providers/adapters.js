@@ -2,9 +2,19 @@
 // { model, system, messages:[{role:'user'|'assistant', text, images:[{media_type, base64}]}],
 //   maxOutputTokens, reasoning } to the vendor wire format, and vendor stream events back to
 // { type: 'content'|'reasoning'|'usage'|'finish'|'error'|'meta' }.
-import { jsonCall } from './transport.js';
+import { jsonCall, MAX_ERROR_CHARS } from './transport.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return null; } };
+
+/**
+ * An in-stream error event is reported exactly as the provider sent it (the raw event data),
+ * truncated only if very long. No interpretation: the provider's own text is the most useful
+ * diagnosis. The transport redacts secrets before it reaches logs, storage or the UI.
+ */
+export function rawStreamError(data) {
+  const raw = String(data ?? '').trim();
+  return raw.length > MAX_ERROR_CHARS ? `${raw.slice(0, MAX_ERROR_CHARS)}…` : raw || '(empty error event)';
+}
 
 // ---------------------------------------------------------------- model support classification
 // A provider's model list only contains models the API key can access. These classifiers decide
@@ -126,8 +136,9 @@ const openai = {
           { type: 'finish', reason: e.type === 'response.incomplete' ? (e.response?.incomplete_details?.reason || 'incomplete') : 'stop' },
         ];
       }
-      case 'response.failed': return [{ type: 'error', message: e.response?.error?.message || 'Response failed.' }];
-      case 'error': return [{ type: 'error', message: e.message || 'Provider error.' }];
+      case 'response.failed':
+      case 'error':
+        return [{ type: 'error', message: rawStreamError(data) }];
       default: return [{ type: 'meta' }];
     }
   },
@@ -197,7 +208,7 @@ const anthropic = {
           { type: 'usage', outputTokens: e.usage?.output_tokens ?? null },
           ...(e.delta?.stop_reason ? [{ type: 'finish', reason: e.delta.stop_reason }] : []),
         ];
-      case 'error': return [{ type: 'error', message: e.error?.message || 'Provider error.' }];
+      case 'error': return [{ type: 'error', message: rawStreamError(data) }];
       default: return [{ type: 'meta' }]; // ping, message_stop, content_block_start/stop
     }
   },
@@ -240,7 +251,7 @@ const gemini = {
   parseEvent({ data }) {
     const e = safeJson(data);
     if (!e) return [{ type: 'meta' }];
-    if (e.error) return [{ type: 'error', message: e.error.message || 'Provider error.' }];
+    if (e.error) return [{ type: 'error', message: rawStreamError(data) }];
     const out = [];
     const cand = e.candidates?.[0];
     for (const part of cand?.content?.parts || []) {

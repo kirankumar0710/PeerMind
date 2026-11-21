@@ -2,6 +2,9 @@
 // Vendor-specific request/response shapes live in the adapters; this module is vendor-neutral.
 import { DEFAULT_TIMEOUTS } from '../core/constants.js';
 
+/** Provider error text (HTTP bodies, in-stream error events) is shown raw, up to this many characters. */
+export const MAX_ERROR_CHARS = 2000;
+
 export class ProviderError extends Error {
   /**
    * @param {'timeout'|'http'|'network'|'aborted'|'provider'} kind
@@ -105,7 +108,7 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
     if (!res.ok) {
       clearTimeout(timer);
       const detail = await res.text().catch(() => '');
-      throw new ProviderError('http', `HTTP ${res.status}: ${redact(detail.slice(0, 500), apiKey)}`, { status: res.status, headersReceived: true });
+      throw new ProviderError('http', `HTTP ${res.status}: ${redact(detail.slice(0, MAX_ERROR_CHARS), apiKey)}`, { status: res.status, headersReceived: true });
     }
     arm(t.firstContentMs, 'waiting for first content');
 
@@ -160,7 +163,7 @@ export async function jsonCall(url, { method = 'GET', headers = {}, body, apiKey
   try {
     const res = await fetchImpl(url, { method, headers, body: body && JSON.stringify(body), signal: controller.signal });
     const text = await res.text();
-    if (!res.ok) throw new ProviderError('http', `HTTP ${res.status}: ${redact(text.slice(0, 500), apiKey)}`, { status: res.status });
+    if (!res.ok) throw new ProviderError('http', `HTTP ${res.status}: ${redact(text.slice(0, MAX_ERROR_CHARS), apiKey)}`, { status: res.status });
     return JSON.parse(text);
   } catch (e) {
     if (e instanceof ProviderError) throw e;

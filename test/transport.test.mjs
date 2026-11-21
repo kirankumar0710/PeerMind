@@ -95,3 +95,29 @@ test('adapters map reasoning to liveness-only events with no text (FR-093)', () 
   assert.deepEqual(g, [{ type: 'reasoning' }, { type: 'content', text: '{}' }]);
   assert.deepEqual(ADAPTERS.anthropic.parseEvent({ event: 'ping', data: '{}' }), [{ type: 'meta' }]);
 });
+
+test('in-stream provider errors are reported raw, as the provider sent them, for every provider', async () => {
+  const { rawStreamError } = await import('../src/providers/adapters.js');
+  const { MAX_ERROR_CHARS } = await import('../src/providers/transport.js');
+  const openaiErr = JSON.stringify({ type: 'error', error: { message: 'Org must be verified', code: 'unsupported_value' }, sequence_number: 2 });
+  const openaiFailed = JSON.stringify({ type: 'response.failed', response: { error: { code: 'server_error', message: 'boom' } } });
+  const anthropicErr = JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } });
+  const geminiErr = JSON.stringify({ error: { code: 429, message: 'Resource exhausted', status: 'RESOURCE_EXHAUSTED' } });
+  assert.deepEqual(ADAPTERS.openai.parseEvent({ event: 'message', data: openaiErr }), [{ type: 'error', message: openaiErr }]);
+  assert.deepEqual(ADAPTERS.openai.parseEvent({ event: 'message', data: openaiFailed }), [{ type: 'error', message: openaiFailed }]);
+  assert.deepEqual(ADAPTERS.anthropic.parseEvent({ event: 'error', data: anthropicErr }), [{ type: 'error', message: anthropicErr }]);
+  assert.deepEqual(ADAPTERS.google.parseEvent({ event: 'message', data: geminiErr }), [{ type: 'error', message: geminiErr }]);
+  assert.equal(rawStreamError('x'.repeat(MAX_ERROR_CHARS + 50)).length, MAX_ERROR_CHARS + 1); // truncated with "…"
+  assert.equal(rawStreamError('  '), '(empty error event)');
+});
+
+test('the raw error reaches the caller with secrets redacted', async () => {
+  const key = 'sk-secret-key-123456789';
+  const errAdapter = {
+    buildStreamRequest: () => ({ url: 'https://example.test', headers: {}, body: {} }),
+    parseEvent: ({ data }) => [{ type: 'error', message: data }],
+  };
+  const fetchImpl = async () => new Response(`data: {"error":{"message":"bad key ${key}"}}\n\n`, { status: 200 });
+  await assert.rejects(streamCall(errAdapter, {}, { apiKey: key, timeouts: T, fetchImpl }),
+    (e) => e.kind === 'provider' && e.message === '{"error":{"message":"bad key ***"}}');
+});
