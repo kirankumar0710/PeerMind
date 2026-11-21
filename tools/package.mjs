@@ -12,7 +12,9 @@ const add = (p) => {
   entries.push({ name: relative(root, p), data: new Uint8Array(readFileSync(p)) });
 };
 add(join(root, 'manifest.json'));
-add(join(root, 'icons'));
+// Only the icon files the manifest references; source artwork in icons/ (e.g. newicon.png) stays out.
+const iconPaths = new Set([...Object.values(manifest.icons || {}), ...Object.values(manifest.action?.default_icon || {})]);
+for (const p of [...iconPaths].sort()) add(join(root, p));
 add(join(root, 'src'));
 
 // Fixed timestamp so identical sources produce an identical package hash.
