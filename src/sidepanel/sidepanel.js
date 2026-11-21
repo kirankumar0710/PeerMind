@@ -635,7 +635,7 @@ async function saveDraft(s) {
     ui.saveStatus = { state: 'saved' };
     setTimeout(() => {
       if (ui.saveStatus?.state === 'saved') { ui.saveStatus = null; if (ui.tab === 'settings') render(); }
-    }, 3000);
+    }, 6000);
   } catch (e) {
     ui.saveStatus = { state: 'error', message: `Could not save: ${e.message}` };
   }
@@ -649,8 +649,10 @@ function saveBar(s) {
     : st.state === 'saving' ? h('span', { class: 'small muted' }, 'Saving…')
     : st.state === 'saved' ? h('span', { class: 'small', style: 'color:var(--ok)' }, '✓ Settings saved')
     : h('span', { class: 'small error' }, st.message);
+  // Spacer first, so the message sits immediately to the left of the button, not at the far edge.
   return h('div', { class: 'row save-bar' },
-    h('span', { class: 'grow' }, status),
+    h('span', { class: 'grow' }),
+    status,
     h('button', { class: 'primary', disabled: st?.state === 'saving', onclick: () => saveDraft(s) }, st?.state === 'saving' ? 'Saving…' : 'Save settings'));
 }
 
