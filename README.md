@@ -7,10 +7,33 @@ A Generator model (G) from one vendor drafts an answer. A Reviewer model (R) fro
 - Plain JavaScript (ES modules), HTML and CSS. There is no build step and no runtime dependencies.
 - Supported providers are OpenAI, Anthropic and Google Gemini, called through their first-party APIs with API keys.
 
+## Build the package
+
+There is no compile step, because the browser runs the source files as they are. Building means checking the code and zipping it into one package. That same package is installed on both Brave and Chrome (FR-104). Run these from the repo root.
+
+1. **One-time setup.** This installs a test-only dependency; nothing from it goes into the package.
+   ```sh
+   npm install
+   ```
+2. **Check the code.** Fix any failure before building.
+   ```sh
+   npm test             # expect: pass 45, fail 0
+   npm run check:compat # expect: check-compat: OK
+   ```
+3. **Build.**
+   ```sh
+   npm run package
+   ```
+   This writes `dist/peermind-<version>.zip` and prints its SHA-256. The zip holds only `manifest.json`, `icons/` and `src/`. The same sources always give the same hash. Record it with every Brave and Chrome test result (FR-105), and bump `"version"` in `manifest.json` before building a changed release.
+4. **Unzip it for loading.** In developer mode, Brave and Chrome load a folder, not a `.zip`.
+   ```sh
+   rm -rf dist/peermind-0.1.0 && unzip -q dist/peermind-0.1.0.zip -d dist/peermind-0.1.0
+   ```
+
 ## Load it in Brave (or Chrome)
 
 1. Open `brave://extensions` (or `chrome://extensions`) and turn on **Developer mode**.
-2. Click **Load unpacked** and select this folder.
+2. Click **Load unpacked** and select `dist/peermind-<version>`. Load the same folder in both browsers.
 3. Click the PeerMind toolbar icon to open the side panel.
 4. Go to **Settings** and do the following:
    - Add API keys for two different vendors. Keys are kept for the browser session only.
@@ -24,6 +47,8 @@ To get a reasoning model's thinking events (FR-092), tick its "Reasoning model" 
 
 ## Develop
 
+For day-to-day work you can skip the build. Choose **Load unpacked** on the repo folder itself, and click the reload icon on the extension card after each change. Use the built package from `dist/` for any test run you record, so the results match a package hash.
+
 ```sh
 npm install           # dev-only: fake-indexeddb for the end-to-end tests
 npm test              # unit tests and an end-to-end orchestrator test with stubbed providers
@@ -31,6 +56,10 @@ npm run check:compat  # AC-49 static check: no browser branching outside src/com
 npm run package       # dist/peermind-<version>.zip plus its SHA-256 (the same package for Brave and Chrome)
 npm run icons         # regenerate icons/
 ```
+
+### Signed `.crx` for distribution (optional)
+
+On `brave://extensions`, click **Pack extension** and select `dist/peermind-<version>`. This produces a `.crx` and a `.pem` private key. Keep the `.pem` safe and out of git, because every future update must be signed with the same key. Whether a `.crx` is needed depends on the distribution channel, which the spec leaves undecided (§16.2).
 
 ## Layout
 
