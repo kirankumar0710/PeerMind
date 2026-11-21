@@ -6,13 +6,41 @@ import { jsonCall } from './transport.js';
 
 const safeJson = (s) => { try { return JSON.parse(s); } catch { return null; } };
 
+// ---------------------------------------------------------------- model support classification
+// A provider's model list only contains models the API key can access. These classifiers decide
+// whether a listed model can run PeerMind's text-generation protocol. Unsupported operations are
+// never assumed (§6.1): anything unrecognised is reported as unsupported, with a reason.
+const supported = { supported: true, reason: null };
+const unsupported = (reason) => ({ supported: false, reason });
+
+export function classifyOpenAiModel(id) {
+  const m = id.match(/embedding|whisper|tts|dall-e|gpt-image|image|moderation|realtime|audio|transcribe|search|davinci|babbage|computer-use|sora/);
+  if (m) return unsupported(`${m[0]} model, not text generation`);
+  if (/^(gpt-|o\d|chatgpt-)/.test(id)) return supported;
+  return unsupported('not a recognised text-generation model');
+}
+
+export function classifyAnthropicModel(id) {
+  return id.startsWith('claude') ? supported : unsupported('not a recognised Claude model');
+}
+
+export function classifyGeminiModel(id, methods = []) {
+  if (!methods.includes('generateContent')) return unsupported('does not support generateContent');
+  const m = id.match(/embedding|aqa|imagen|veo|tts|native-audio|live/);
+  if (m) return unsupported(`${m[0]} model, not text generation`);
+  return supported;
+}
+
+/** Supported models first, then alphabetical. */
+const sortModels = (list) => list.sort((a, b) => (b.supported - a.supported) || a.id.localeCompare(b.id));
+
 // ---------------------------------------------------------------- OpenAI (Responses API)
 const openai = {
   vendor: 'openai',
   label: 'OpenAI',
   async listModels(apiKey) {
     const r = await jsonCall('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` }, apiKey });
-    return r.data.map((m) => ({ id: m.id })).sort((a, b) => a.id.localeCompare(b.id));
+    return sortModels(r.data.map((m) => ({ id: m.id, ...classifyOpenAiModel(m.id) })));
   },
   buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
     const input = messages.map((m) => (m.role === 'assistant'
@@ -71,7 +99,7 @@ const anthropic = {
   label: 'Anthropic',
   async listModels(apiKey) {
     const r = await jsonCall('https://api.anthropic.com/v1/models?limit=1000', { headers: ANTHROPIC_HEADERS(apiKey), apiKey });
-    return r.data.map((m) => ({ id: m.id, label: m.display_name }));
+    return sortModels(r.data.map((m) => ({ id: m.id, label: m.display_name, ...classifyAnthropicModel(m.id) })));
   },
   buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
     const body = {
@@ -119,9 +147,13 @@ const gemini = {
   label: 'Google Gemini',
   async listModels(apiKey) {
     const r = await jsonCall('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': apiKey }, apiKey });
-    return (r.models || [])
-      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
-      .map((m) => ({ id: m.name.replace(/^models\//, ''), label: m.displayName, contextWindow: m.inputTokenLimit, maxOutput: m.outputTokenLimit }));
+    return sortModels((r.models || []).map((m) => {
+      const id = m.name.replace(/^models\//, '');
+      return {
+        id, label: m.displayName, contextWindow: m.inputTokenLimit, maxOutput: m.outputTokenLimit,
+        ...classifyGeminiModel(id, m.supportedGenerationMethods || []),
+      };
+    }));
   },
   buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
     const generationConfig = { maxOutputTokens, responseMimeType: 'application/json' };

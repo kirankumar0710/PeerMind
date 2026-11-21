@@ -287,20 +287,21 @@ async function preflight(run) {
   for (const p of new Set([g.provider, r.provider])) if (!(await getKey(p))) missing.push(ADAPTERS[p].label);
   if (missing.length) return { message: `API key needed for: ${missing.join(', ')}.`, action: 'MISSING_KEYS' };
 
+  // Authentication, connectivity and model usability with this key.
+  for (const cfg of [g, r]) {
+    const models = await ADAPTERS[cfg.provider].listModels(await getKey(cfg.provider));
+    const m = models.find((x) => x.id === cfg.model);
+    if (!m) return { message: `Model "${cfg.model}" is not available from ${ADAPTERS[cfg.provider].label} with this API key.`, action: 'SETTINGS' };
+    if (!m.supported) return { message: `Model "${cfg.model}" is not supported by PeerMind (${m.reason}).`, action: 'SETTINGS' };
+    if (m.maxOutput && cfg.maxOutputTokens > m.maxOutput) {
+      return { message: `Max output tokens for ${cfg.model} exceed the model maximum (${m.maxOutput}).`, action: 'SETTINGS' };
+    }
+  }
+
   const pricingG = settings.pricing[pricingKey(g.provider, g.model)] || null;
   const pricingR = settings.pricing[pricingKey(r.provider, r.model)] || null;
   if (conv.budgetEnforced && (!hasPricing(pricingG) || !hasPricing(pricingR))) {
     return { message: 'Pricing is missing for a selected model.', action: 'PRICING' };
-  }
-
-  // Authentication, connectivity and model usability.
-  for (const cfg of [g, r]) {
-    const models = await ADAPTERS[cfg.provider].listModels(await getKey(cfg.provider));
-    const m = models.find((x) => x.id === cfg.model);
-    if (!m) return { message: `Model "${cfg.model}" is not available from ${ADAPTERS[cfg.provider].label}.`, action: 'SETTINGS' };
-    if (m.maxOutput && cfg.maxOutputTokens > m.maxOutput) {
-      return { message: `Max output tokens for ${cfg.model} exceed the model maximum (${m.maxOutput}).`, action: 'SETTINGS' };
-    }
   }
 
   const config = {

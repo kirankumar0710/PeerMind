@@ -10,7 +10,7 @@ import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
   tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '',
-  error: null, thinkingOp: null, models: {}, providerMsg: {},
+  error: null, thinkingOp: null, settingsDraft: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
 // ------------------------------------------------------------------ helpers
@@ -366,10 +366,34 @@ async function exportConversation(id) {
 }
 
 // ------------------------------------------------------------------ settings tab
+/** List the models the stored key can access, each classified as supported or not. */
+async function loadModels(provider) {
+  try {
+    const models = await send('listModels', { provider });
+    ui.models[provider] = models;
+    delete ui.modelErrors[provider];
+    ui.providerMsg[provider] = `Connected · ${models.filter((m) => m.supported).length} of ${models.length} models supported`;
+  } catch (e) {
+    delete ui.models[provider];
+    ui.modelErrors[provider] = e.message;
+    ui.providerMsg[provider] = `Test failed: ${e.message}`;
+  }
+}
+
 function renderSettings() {
   const root = document.getElementById('tab-settings');
-  const s = structuredClone(ui.app.settings);
+  // Edits live in a draft until "Save settings", so re-renders never lose them.
+  const s = (ui.settingsDraft ||= structuredClone(ui.app.settings));
+  s.disclosureAcks = { ...ui.app.settings.disclosureAcks };
   const providers = ui.app.providers;
+
+  // Load model lists automatically for the selected providers once a key exists.
+  for (const p of new Set([s.generator.provider, s.reviewer.provider])) {
+    if (ui.app.keys[p] && !ui.models[p] && !ui.modelErrors[p] && !ui.modelsLoading.has(p)) {
+      ui.modelsLoading.add(p);
+      loadModels(p).finally(() => { ui.modelsLoading.delete(p); if (ui.tab === 'settings') render(); });
+    }
+  }
 
   const keyRows = providers.map((p) => {
     const input = h('input', { type: 'password', placeholder: ui.app.keys[p.id] ? `Saved: ${ui.app.keys[p.id]}` : 'API key', autocomplete: 'off' });
@@ -377,34 +401,53 @@ function renderSettings() {
       h('div', { style: 'width:110px' }, p.label),
       h('div', { class: 'grow' }, input, ui.providerMsg[p.id] ? h('div', { class: 'small muted' }, ui.providerMsg[p.id]) : null),
       h('button', { onclick: () => act(async () => { await send('setKey', { provider: p.id, key: input.value }); }) }, 'Save'),
-      h('button', { disabled: !ui.app.keys[p.id], onclick: () => act(async () => {
-        try {
-          const models = await send('listModels', { provider: p.id });
-          ui.models[p.id] = models;
-          ui.providerMsg[p.id] = `Connected · ${models.length} models`;
-        } catch (e) { ui.providerMsg[p.id] = `Test failed: ${e.message}`; }
-      }) }, 'Test'),
+      h('button', { disabled: !ui.app.keys[p.id], onclick: () => act(() => loadModels(p.id)) }, 'Test'),
       h('button', { class: 'danger', disabled: !ui.app.keys[p.id], onclick: () => act(() => send('removeKey', { provider: p.id })) }, 'Remove'));
   });
 
   const roleSection = (key, title, cls) => {
     const cfg = s[key];
-    const listId = `models-${key}`;
-    const models = ui.models[cfg.provider] || [];
+    const models = ui.models[cfg.provider];
+    const hasKey = !!ui.app.keys[cfg.provider];
+    const reload = () => act(() => loadModels(cfg.provider));
+
+    // 🟢 supported with this key · 🔴 listed for this key but not usable by PeerMind (disabled).
+    const options = [];
+    if (!cfg.model) options.push(h('option', { value: '', selected: true, disabled: true }, models ? 'Select a model…' : 'Load models to choose'));
+    if (cfg.model && !models?.some((m) => m.id === cfg.model)) {
+      options.push(h('option', { value: cfg.model, selected: true },
+        models ? `🔴 ${cfg.model}: not available with this key` : `⚪ ${cfg.model}: not checked yet`));
+    }
+    for (const m of models || []) {
+      const name = m.label && m.label !== m.id ? `${m.id} (${m.label})` : m.id;
+      options.push(h('option', { value: m.id, selected: m.id === cfg.model, disabled: !m.supported, title: m.reason || '' },
+        m.supported ? `🟢 ${name}` : `🔴 ${name}: ${m.reason}`));
+    }
+    const current = models?.find((m) => m.id === cfg.model);
+    const status = !hasKey ? h('div', { class: 'small error' }, 'Add an API key for this provider first.')
+      : ui.modelErrors[cfg.provider] ? h('div', { class: 'small error' }, `Could not load models: ${ui.modelErrors[cfg.provider]}`)
+      : !models ? h('div', { class: 'small muted' }, 'Loading models…')
+      : !cfg.model ? h('div', { class: 'small muted' }, `${models.filter((m) => m.supported).length} of ${models.length} models usable with this key`)
+      : current?.supported ? h('div', { class: 'small', style: 'color:var(--ok)' }, '🟢 Supported and available with this key')
+      : h('div', { class: 'small error' }, `🔴 ${current ? current.reason : 'Not available with this key'}`);
+
     return h('div', {},
       h('h3', {}, h('span', { class: cls }, title)),
       h('label', {}, 'Provider'),
-      h('select', { onchange: (e) => { cfg.provider = e.target.value; cfg.model = ''; } },
+      h('select', { onchange: (e) => { cfg.provider = e.target.value; cfg.model = ''; render(); } },
         providers.map((p) => h('option', { value: p.id, selected: p.id === cfg.provider }, `${p.label} (vendor: ${p.vendor})`))),
       h('label', {}, 'Model'),
       h('div', { class: 'row' },
-        h('input', { class: 'grow', list: listId, value: cfg.model, oninput: (e) => {
+        h('select', { class: 'grow', disabled: !hasKey, onchange: (e) => {
           cfg.model = e.target.value;
-          const m = models.find((x) => x.id === cfg.model);
+          const m = models?.find((x) => x.id === cfg.model);
           if (m?.contextWindow) cfg.contextWindow = m.contextWindow;
-        } }),
-        h('button', { onclick: () => act(async () => { ui.models[cfg.provider] = await send('listModels', { provider: cfg.provider }); ui.app.settings = await send('saveSettings', { patch: { [key]: cfg } }); }) }, 'Load models')),
-      h('datalist', { id: listId }, models.map((m) => h('option', { value: m.id }, m.label || m.id))),
+          if (m?.maxOutput && cfg.maxOutputTokens > m.maxOutput) cfg.maxOutputTokens = m.maxOutput;
+          render();
+        } }, options),
+        h('button', { disabled: !hasKey, onclick: reload }, 'Refresh')),
+      status,
+      h('div', { class: 'small muted' }, '🟢 supported · 🔴 not supported (cannot be selected)'),
       h('div', { class: 'row' },
         h('div', { class: 'grow' }, h('label', {}, 'Max output tokens'), h('input', { type: 'number', min: '256', value: cfg.maxOutputTokens, oninput: (e) => { cfg.maxOutputTokens = parseInt(e.target.value, 10); } })),
         h('div', { class: 'grow' }, h('label', {}, 'Context window (tokens)'), h('input', { type: 'number', min: '1024', value: cfg.contextWindow, oninput: (e) => { cfg.contextWindow = parseInt(e.target.value, 10); } }))),
@@ -443,6 +486,7 @@ function renderSettings() {
     h('div', { class: 'row' }, h('span', { class: 'grow' }),
       h('button', { class: 'primary', onclick: () => act(async () => {
         ui.app.settings = await send('saveSettings', { patch: { generator: s.generator, reviewer: s.reviewer, iterationLimit: s.iterationLimit, defaultCapUsd: s.defaultCapUsd, pricing: s.pricing, timeouts: s.timeouts } });
+        ui.settingsDraft = null;
       }) }, 'Save settings')),
   );
 }
@@ -459,7 +503,11 @@ function pricingInputs(s, cfg) {
 
 // ------------------------------------------------------------------ boot
 for (const b of document.querySelectorAll('.tabs button')) {
-  b.addEventListener('click', () => { ui.tab = b.dataset.tab; render(); });
+  b.addEventListener('click', () => {
+    if (b.dataset.tab === 'settings' && ui.tab !== 'settings') ui.settingsDraft = null; // fresh form on entry
+    ui.tab = b.dataset.tab;
+    render();
+  });
 }
 const params = new URLSearchParams(location.search);
 if (params.get('conversation')) ui.convId = params.get('conversation');

@@ -22,7 +22,7 @@ const sse = (lines) => new Response(new ReadableStream({
 }), { status: 200 });
 
 globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
-  if (method === 'GET' && url.includes('openai.com')) return Response.json({ data: [{ id: 'gpt-test' }] });
+  if (method === 'GET' && url.includes('openai.com')) return Response.json({ data: [{ id: 'gpt-test' }, { id: 'whisper-1' }] });
   if (method === 'GET' && url.includes('anthropic.com')) return Response.json({ data: [{ id: 'claude-test', display_name: 'Claude Test' }] });
   const vendor = url.includes('openai.com') ? 'openai' : 'anthropic';
   calls[vendor] += 1;
@@ -151,6 +151,20 @@ test('same-vendor configuration is blocked at pre-flight (AC-02)', async () => {
   assert.match(run.failure.message, /different vendors/);
   await orch.abandon(runId);
   assert.equal((await get('runs', runId)).abandonmentReason, 'USER_ABANDONED_AFTER_FAILURE');
+});
+
+test('pre-flight blocks a listed but unsupported model, and a model the key cannot access', async () => {
+  await configure({ generator: { provider: 'openai', model: 'whisper-1', maxOutputTokens: 1000, contextWindow: 100000 } });
+  let { runId } = await orch.submitPrompt({ prompt: 'p', capUsd: 5 });
+  let run = await settle(runId);
+  assert.match(run.failure.message, /not supported by PeerMind/);
+  await orch.abandon(runId);
+
+  await configure({ generator: { provider: 'openai', model: 'gpt-not-on-this-key', maxOutputTokens: 1000, contextWindow: 100000 } });
+  ({ runId } = await orch.submitPrompt({ prompt: 'p', capUsd: 5 }));
+  run = await settle(runId);
+  assert.match(run.failure.message, /not available .* with this API key/);
+  await orch.abandon(runId);
 });
 
 test('missing pricing fails pre-flight with PRICING action; proceeding unenforced works (FR-081)', async () => {
