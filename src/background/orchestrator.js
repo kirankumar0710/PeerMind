@@ -10,6 +10,7 @@ import { applyReviewReport } from '../core/findings.js';
 import { buildRequest, correctiveMessage } from '../core/context.js';
 import { checkReserve, costUsd, hasPricing, effectivePricing } from '../core/budget.js';
 import { defaultPricing } from '../providers/pricing.js';
+import { loadToolRegistry, toolsForModel, toolEnabled, jsonModeWithTools } from '../providers/tools.js';
 import { uid, nowIso, formatAssetId, sha256Hex, base64ToBytes, bytesToBase64, MEDIA_EXT } from '../core/util.js';
 import { ADAPTERS, vendorOf } from '../providers/adapters.js';
 import { streamCall, ProviderError } from '../providers/transport.js';
@@ -87,7 +88,7 @@ async function startWaitingRun() {
 // ------------------------------------------------------------------ public API
 
 /** Submit a prompt (§2): creates the conversation if needed, enforces the conversation lock (FR-049). */
-export async function submitPrompt({ conversationId, prompt, images = [], capUsd }) {
+export async function submitPrompt({ conversationId, prompt, images = [], capUsd, tools = {}, webSearch }) {
   if (!prompt?.trim() && !images.length) throw new Error('Enter a prompt or attach an image.');
   const settings = await getSettings();
   const assetRecords = [];
@@ -105,6 +106,8 @@ export async function submitPrompt({ conversationId, prompt, images = [], capUsd
         id: uid('conv'), title: (prompt || 'Image prompt').slice(0, 60), createdAt: nowIso(), updatedAt: nowIso(),
         capUsd: Number.isFinite(capUsd) ? capUsd : settings.defaultCapUsd, budgetEnforced: true,
         readOnly: false, nextFindingNumber: 1, nextAssetNumber: 1,
+        // Per-tool switches ({ web_search: true, … }); tools not listed use their tools.json default.
+        tools: { ...(typeof webSearch === 'boolean' ? { web_search: webSearch } : {}), ...toolSwitches(tools) },
       };
     }
     if (conv.readOnly) throw new Error('This conversation is read-only for provider calls.');
@@ -214,11 +217,18 @@ export async function updateConversation(conversationId, patch) {
   const allowed = {};
   if (Number.isFinite(patch.capUsd) && patch.capUsd >= 0) allowed.capUsd = patch.capUsd;
   if (typeof patch.readOnly === 'boolean') allowed.readOnly = patch.readOnly;
+  if (typeof patch.webSearch === 'boolean') patch = { ...patch, tools: { ...patch.tools, web_search: patch.webSearch } };
   await tx(['conversations'], 'readwrite', async (s) => {
     const c = await s.conversations.get(conversationId);
-    await s.conversations.put({ ...c, ...allowed, updatedAt: nowIso() });
+    const tools = patch.tools ? { ...c.tools, ...toolSwitches(patch.tools) } : c.tools;
+    await s.conversations.put({ ...c, ...allowed, ...(tools ? { tools } : {}), updatedAt: nowIso() });
   });
   emit({ type: 'conversation', conversationId });
+}
+
+/** Keep only well-formed switches: { tool_id: boolean }. */
+function toolSwitches(obj) {
+  return Object.fromEntries(Object.entries(obj || {}).filter(([k, v]) => /^[a-z][a-z0-9_]*$/.test(k) && typeof v === 'boolean'));
 }
 
 export const isExecuting = (runId) => active.has(runId);
@@ -290,6 +300,7 @@ async function preflight(run) {
   if (missing.length) return { message: `API key needed for: ${missing.join(', ')}.`, action: 'MISSING_KEYS' };
 
   // Authentication, connectivity, model usability with this key, and detected capabilities.
+  const registry = await loadToolRegistry();
   const resolved = {};
   for (const [role, cfg] of [['generator', g], ['reviewer', r]]) {
     const who = roleSource(role === 'generator' ? 'G' : 'R', cfg);
@@ -315,12 +326,16 @@ async function preflight(run) {
       // extended thinking is chosen, because that changes cost and output.
       reasoning: caps.reasoning && (!caps.thinkingIsOptional || cfg.extendedThinking === true),
       imageInput: caps.imageInput,
+      ...resolveTools(registry, cfg, conv),
     };
   }
 
   // A custom price entered in Settings wins; otherwise the built-in default for that model.
-  const pricingG = effectivePricing(settings.pricing[pricingKey(g.provider, g.model)], defaultPricing(g.provider, g.model));
-  const pricingR = effectivePricing(settings.pricing[pricingKey(r.provider, r.model)], defaultPricing(r.provider, r.model));
+  // Web search fees are per provider and always come from the built-in table.
+  // Web search fees come from tools.json (per vendor variant).
+  const withSearchFee = (p, cfg) => (p ? { ...p, perSearchUsd: cfg.tools.find((t) => t.id === 'web_search')?.pricePerCall ?? 0 } : p);
+  const pricingG = withSearchFee(effectivePricing(settings.pricing[pricingKey(g.provider, g.model)], defaultPricing(g.provider, g.model)), resolved.generator);
+  const pricingR = withSearchFee(effectivePricing(settings.pricing[pricingKey(r.provider, r.model)], defaultPricing(r.provider, r.model)), resolved.reviewer);
   if (conv.budgetEnforced && (!hasPricing(pricingG) || !hasPricing(pricingR))) {
     return { message: 'Pricing is missing for a selected model.', action: 'PRICING' };
   }
@@ -394,6 +409,27 @@ const spentUsd = async (conversationId) => {
   return ops.reduce((sum, o) => sum + (o.costUsd || 0), 0);
 };
 
+/** Searches to reserve budget for when web search is on (Claude's max_uses; an estimate for others). */
+const EXPECTED_SEARCHES = 5;
+const expectedSearches = (cfg) => {
+  const ws = cfg.tools?.find((t) => t.id === 'web_search');
+  return ws ? (ws.request.max_uses ?? EXPECTED_SEARCHES) : 0;
+};
+
+/**
+ * Tools for one role, from tools.json: supported by this model AND switched on for the conversation.
+ * Stored in the run config, so a retry uses the same tool set until pre-flight runs again.
+ */
+function resolveTools(registry, cfg, conv) {
+  const vendor = vendorOf(cfg.provider);
+  const tools = toolsForModel(registry, vendor, cfg.model).filter((t) => toolEnabled(conv, t));
+  return {
+    tools,
+    webSearch: tools.some((t) => t.id === 'web_search'),
+    jsonMode: !tools.length || jsonModeWithTools(registry, vendor),
+  };
+}
+
 const roleCfg = (run, role) => (role === 'G' ? run.config.generator : run.config.reviewer);
 const rolePricing = (run, role) => (role === 'G' ? run.config.pricingG : run.config.pricingR);
 
@@ -412,15 +448,15 @@ async function stepGenerate(run, signal, refine) {
     prompt: run.prompt, images: st.images, confirmedDecisions: [],
     latestOutput: refine ? st.byId.get(run.latestOutputMessageId)?.text : undefined,
     refineFindings, history: st.history,
-    windowTokens: g.contextWindow, maxOutputTokens: g.maxOutputTokens,
+    windowTokens: g.contextWindow, maxOutputTokens: g.maxOutputTokens, webSearch: g.webSearch,
   });
   if (req.overflow) return { finish: CR.CONTEXT_LIMIT_EXCEEDED };
 
   // §9.3 reserve: this G operation + required background ops (none in this build) + the following R review.
   const reviewInputEstimate = req.inputTokens + g.maxOutputTokens + 2000;
   const reserve = await budgetOk(run, st.conv, [
-    { pricing: rolePricing(run, 'G'), inputTokens: req.inputTokens, outputTokens: g.maxOutputTokens },
-    { pricing: rolePricing(run, 'R'), inputTokens: reviewInputEstimate, outputTokens: r.maxOutputTokens },
+    { pricing: rolePricing(run, 'G'), inputTokens: req.inputTokens, outputTokens: g.maxOutputTokens, webSearches: expectedSearches(g) },
+    { pricing: rolePricing(run, 'R'), inputTokens: reviewInputEstimate, outputTokens: r.maxOutputTokens, webSearches: expectedSearches(r) },
   ]);
   if (!reserve.ok) return reserve.reason === 'MISSING_PRICING' ? { fail: { message: 'Pricing is missing.', action: 'PRICING' } } : { finish: CR.BUDGET_REACHED };
 
@@ -436,7 +472,7 @@ async function stepGenerate(run, signal, refine) {
   await tx(['runs', 'messages'], 'readwrite', async (s) => {
     const msg = {
       id: uid('msg'), conversationId: run.conversationId, runId: run.id, seq: nextSeq(), kind: 'g_output',
-      text: obj.response, summary: obj.summary, decisions: refine ? obj.decisions : [], assets: [],
+      text: obj.response, summary: obj.summary, decisions: refine ? obj.decisions : [], assets: [], sources: res.sources || [],
       refinementNo: refine ? run.cursor.refinementsDone + 1 : 0, opId: res.opId, createdAt: nowIso(),
     };
     await s.messages.put(msg);
@@ -469,11 +505,11 @@ async function stepReview(run, signal) {
     resolved: all.filter((f) => f.status === FS.RESOLVED),
     earlierUnresolved: all.filter((f) => !currentOpenIds.has(f.id) && f.status !== FS.RESOLVED),
     history: st.history,
-    windowTokens: r.contextWindow, maxOutputTokens: r.maxOutputTokens,
+    windowTokens: r.contextWindow, maxOutputTokens: r.maxOutputTokens, webSearch: r.webSearch,
   });
   if (req.overflow) return { finish: CR.CONTEXT_LIMIT_EXCEEDED };
 
-  const affordable = await budgetOk(run, st.conv, [{ pricing: rolePricing(run, 'R'), inputTokens: req.inputTokens, outputTokens: r.maxOutputTokens }]);
+  const affordable = await budgetOk(run, st.conv, [{ pricing: rolePricing(run, 'R'), inputTokens: req.inputTokens, outputTokens: r.maxOutputTokens, webSearches: expectedSearches(r) }]);
   if (!affordable.ok) return affordable.reason === 'MISSING_PRICING' ? { fail: { message: 'Pricing is missing.', action: 'PRICING' } } : { finish: CR.BUDGET_REACHED };
 
   let applied = null;
@@ -500,7 +536,7 @@ async function stepReview(run, signal) {
     await s.conversations.put(conv);
     await s.messages.put({
       id: uid('msg'), conversationId: run.conversationId, runId: run.id, seq: nextSeq(), kind: 'r_report',
-      status: res.value.status, summary: res.value.summary, findings: res.value.findings,
+      status: res.value.status, summary: res.value.summary, findings: res.value.findings, sources: res.sources || [],
       createdIds: applied.created.map((f) => ({ provider_finding_ref: f.providerFindingRef, id: f.id })),
       reviewedMessageId: run.latestOutputMessageId, closing, opId: res.opId, createdAt: nowIso(),
     });
@@ -531,15 +567,15 @@ async function callWithCorrective(run, conv, signal, { role, kind, req, validate
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (attempt === 2) {
-      const ok = await budgetOk(run, conv, [{ pricing, inputTokens: req.inputTokens * 2, outputTokens: cfg.maxOutputTokens }]);
+      const ok = await budgetOk(run, conv, [{ pricing, inputTokens: req.inputTokens * 2, outputTokens: cfg.maxOutputTokens, webSearches: expectedSearches(cfg) }]);
       if (!ok.ok) return { finish: CR.BUDGET_REACHED };
     }
-    const { text, opId } = await providerCall(run, signal, { role, kind, cfg, pricing, req, messages, corrective: attempt === 2 });
+    const { text, opId, sources } = await providerCall(run, signal, { role, kind, cfg, pricing, req, messages, corrective: attempt === 2 });
     const parsed = parseStrictJson(text);
     const errors = parsed.errors.length ? parsed.errors : validate(parsed.value);
     if (!errors.length) {
       await updateOp(opId, { state: OpState.SUCCEEDED, validation: 'VALID' });
-      return { value: parsed.value, opId };
+      return { value: parsed.value, opId, sources };
     }
     await updateOp(opId, { state: OpState.FAILED, validation: 'INVALID', error: { kind: 'protocol', errors } });
     if (attempt === 2) {
@@ -580,7 +616,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
   // Diagnostics in the service-worker console: operation, provider and timing only — never keys or content.
   const t0 = Date.now();
   const tag = `[PeerMind] ${kind}${corrective ? ' (corrective)' : ''} ${cfg.provider}/${cfg.model}`;
-  console.info(`${tag} started (reasoning stream ${cfg.reasoning ? 'requested' : 'off'})`);
+  console.info(`${tag} started (reasoning stream ${cfg.reasoning ? 'requested' : 'off'}, tools: ${(cfg.tools || []).map((t) => t.id).join(', ') || 'none'})`);
   let lastSave = Date.now();
   let partial = '';
   const adapter = ADAPTERS[cfg.provider];
@@ -588,13 +624,17 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
     ...adapter,
     parseEvent: (evt) => {
       const out = adapter.parseEvent(evt);
-      for (const o of out) if (o.type === 'content') partial += o.text;
+      for (const o of out) {
+        if (o.type === 'content') partial += o.text;
+        else if (o.type === 'content-reset') partial = '';
+      }
       return out;
     },
   };
   try {
     const result = await streamCall(wrapped, {
       model: cfg.model, system: req.system, messages, maxOutputTokens: cfg.maxOutputTokens, reasoning: cfg.reasoning,
+      tools: (cfg.tools || []).map((t) => t.request), jsonMode: cfg.jsonMode !== false,
     }, {
       apiKey, timeouts: run.config.timeouts, signal,
       onActivity: (k) => {
@@ -605,14 +645,14 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
         }
       },
     });
-    const usage = { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens };
+    const usage = { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, webSearches: result.usage.webSearches || 0 };
     await tx(['operations'], 'readwrite', async (s) => {
       const op = await s.operations.get(opId);
       // State stays IN_PROGRESS until validation decides SUCCEEDED/FAILED; the result is durably recorded now.
-      await s.operations.put({ ...op, partial: result.text, rawResult: result.text, finish: result.finish, usage, costUsd: costUsd(pricing, usage.inputTokens, usage.outputTokens), endedAt: nowIso() });
+      await s.operations.put({ ...op, partial: result.text, rawResult: result.text, finish: result.finish, usage, sources: result.sources, costUsd: costUsd(pricing, usage.inputTokens, usage.outputTokens, usage.webSearches), endedAt: nowIso() });
     });
-    console.info(`${tag} finished in ${Date.now() - t0} ms (${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out, finish: ${result.finish})`);
-    return { text: result.text, opId };
+    console.info(`${tag} finished in ${Date.now() - t0} ms (${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out, ${usage.webSearches} searches, finish: ${result.finish})`);
+    return { text: result.text, opId, sources: result.sources };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError('network', e.message);
     // Say which role and model failed, ahead of the provider's raw message.
@@ -622,7 +662,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
     await updateOp(opId, {
       state: OpState.FAILED, partial: err.partial || partial,
       error: { kind: err.kind, message: err.message, status: err.status },
-      usage, costUsd: usage ? costUsd(pricing, usage.inputTokens ?? 0, usage.outputTokens ?? 0) : null,
+      usage, costUsd: usage ? costUsd(pricing, usage.inputTokens ?? 0, usage.outputTokens ?? 0, usage.webSearches ?? 0) : null,
     });
     throw err;
   }

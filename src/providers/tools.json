@@ -1,0 +1,51 @@
+{
+  "schema": "peermind.tools",
+  "version": 1,
+  "description": "Built-in, vendor-run tools PeerMind can offer to models. Each tool lists, per vendor, ordered variants: the first variant whose 'models' regex matches the model ID is used. 'request' is sent to the vendor exactly as written. 'pricePerCall' is the USD fee per tool call (estimate, as of 'pricesAsOf'). Adding a tool or a new vendor version is an edit to this file; only a new kind of 'result' needs code.",
+  "pricesAsOf": "2026-11-21",
+  "vendorOptions": {
+    "openai": { "jsonModeWithTools": false, "note": "text.format json_object is not combined with tools" },
+    "anthropic": { "jsonModeWithTools": true, "note": "no JSON mode; unaffected" },
+    "google": { "jsonModeWithTools": false, "note": "responseMimeType application/json is not combined with Search grounding" }
+  },
+  "tools": {
+    "web_search": {
+      "label": "Web search (live information)",
+      "description": "Lets the Generator and Reviewer search the web for current information when they need it. The model decides when to search. Searches are billed per call by the provider.",
+      "result": "sources",
+      "defaultEnabled": true,
+      "vendors": {
+        "openai": [
+          {
+            "models": "^(gpt-4o|gpt-4\\.1(?!-nano)|gpt-[5-9]|o3(?!-mini)|o4)",
+            "request": { "type": "web_search" },
+            "pricePerCall": 0.01,
+            "priceNote": "$10 / 1,000 calls"
+          }
+        ],
+        "anthropic": [
+          {
+            "models": "^claude-((opus|sonnet)-(4-[6-9]|[5-9])|fable-|mythos-)",
+            "request": { "type": "web_search_20260209", "name": "web_search", "max_uses": 5 },
+            "pricePerCall": 0.01,
+            "priceNote": "$10 / 1,000 searches; dynamic-filtering version"
+          },
+          {
+            "models": "^claude-(3-5-|3-7-|(opus|sonnet|haiku)-[4-9])",
+            "request": { "type": "web_search_20250305", "name": "web_search", "max_uses": 5 },
+            "pricePerCall": 0.01,
+            "priceNote": "$10 / 1,000 searches; basic version"
+          }
+        ],
+        "google": [
+          {
+            "models": "^gemini-[2-9]",
+            "request": { "google_search": {} },
+            "pricePerCall": 0.014,
+            "priceNote": "~$14 / 1,000 queries (secondary source; verify)"
+          }
+        ]
+      }
+    }
+  }
+}

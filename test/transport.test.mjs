@@ -42,7 +42,7 @@ const T = { streamingHeadersMs: 50, firstContentMs: 80, inactivityMs: 40, nonStr
 test('happy path collects content and usage', async () => {
   const r = await streamCall(fake, {}, { timeouts: T, fetchImpl: fakeFetch([[5, 'C:{"a"'], [5, 'C::1}'], [5, 'U']]) });
   assert.equal(r.text, '{"a":1}');
-  assert.deepEqual(r.usage, { inputTokens: 7, outputTokens: 3 });
+  assert.deepEqual(r.usage, { inputTokens: 7, outputTokens: 3, webSearches: 0 });
 });
 
 test('header timeout (30 s default, scaled)', async () => {

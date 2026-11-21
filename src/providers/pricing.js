@@ -15,6 +15,7 @@
 //   changes                  optional scheduled price changes: [{ from: 'YYYY-MM-DD', input, output }]
 
 export const PRICES_AS_OF = '2026-11-21';
+// Built-in tool fees (e.g. web search per call) live with the tools in src/providers/tools.json.
 
 const P = (input, output, extra = {}) => ({ input, output, ...extra });
 

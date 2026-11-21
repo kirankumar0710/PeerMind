@@ -10,7 +10,7 @@ import {
 import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
-  tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '',
+  tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '', newTools: {},
   error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, saveStatus: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
@@ -203,6 +203,7 @@ function renderRun() {
         h('div', { class: 'row', style: 'margin-bottom:6px' }, outRun.state === S.FINISHED || outRun.reviewStatus ? reviewPill(outRun)
           : h('span', { class: `pill ${outRun.latestOutputReviewed ? 'info' : 'warn'}` }, outRun.latestOutputReviewed ? 'reviewed, run in progress' : 'awaiting review')),
         h('div', { class: 'output' }, outMsg.text || '(empty response)'),
+        sourcesList(outMsg.sources),
         (outRun.downgradeDependencies || []).length ? h('div', { class: 'small' }, h('h3', {}, 'Severity downgrades this completion depends on'),
           ...outRun.downgradeDependencies.map((dg) => h('div', {}, `${dg.finding_id}: ${dg.from} → ${dg.to} — ${dg.reason}`))) : null));
     }
@@ -319,10 +320,12 @@ function iterationsCard(d) {
         m.decisions?.length ? h('table', {},
           h('thead', {}, h('tr', {}, h('th', {}, 'Finding'), h('th', {}, 'Decision'), h('th', {}, 'Reason'))),
           h('tbody', {}, m.decisions.map((x) => h('tr', {}, h('td', {}, x.finding_id), h('td', {}, DECISION_LABEL[x.decision] || x.decision), h('td', {}, x.reason))))) : null,
-        h('div', { class: 'output' }, m.text));
+        h('div', { class: 'output' }, m.text),
+        sourcesList(m.sources));
     }
     if (m.kind === 'r_report') {
       return h('details', {}, h('summary', {}, h('span', { class: 'role-r' }, m.closing ? 'Closing review' : 'Review'), ` · ${REVIEW_STATUS_LABEL[m.status] || m.status} · ${m.summary}`),
+        sourcesList(m.sources, 'Sources the Reviewer checked'),
         h('pre', {}, JSON.stringify(m.findings, null, 2)));
     }
     return null;
@@ -336,13 +339,45 @@ function timelineCard(d) {
     h('summary', {}, h('span', { class: o.role === 'G' ? 'role-g' : 'role-r' }, opLabel(o)), ` · ${providerLabel(o.provider)} ${o.model} · ${time(o.startedAt)} · `,
       h('span', { class: `pill ${o.state === OpState.SUCCEEDED ? 'ok' : o.state === OpState.IN_PROGRESS ? 'info' : 'bad'}` }, o.state),
       o.state === OpState.IN_PROGRESS && ui.thinkingOp === o.id ? h('span', { class: 'thinking small' }, ' Thinking') : null),
-    h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'} · cost ${money(o.costUsd)}`),
+    h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'}${o.usage?.webSearches ? ` · ${o.usage.webSearches} web search${o.usage.webSearches === 1 ? '' : 'es'}` : ''} · cost ${money(o.costUsd)}`),
     o.error ? h('div', { class: 'small error' }, o.error.message || (o.error.errors || []).join(' ')) : null,
     h('details', {}, h('summary', { class: 'small' }, 'Context sent'), h('pre', {}, JSON.stringify(o.contextSent, null, 2))),
     o.partial && o.state !== OpState.SUCCEEDED ? h('details', {}, h('summary', { class: 'small' }, 'Partial output'), h('pre', {}, o.partial)) : null));
   return h('section', { class: 'card' }, h('h2', {}, 'Timeline'), rows,
     h('h3', {}, 'Usage by role'),
     ...usage.byRole.map((r) => h('div', { class: 'small' }, `${ROLE_LABEL[r.role] || r.role} · ${providerLabel(r.provider)}: ${r.inputTokens} in / ${r.outputTokens} out · ${r.costIncomplete && !r.costUsd ? 'Not available' : money(r.costUsd)}`)));
+}
+
+/** Clickable source links (http/https only), opened in a new tab. */
+function sourcesList(sources, title = 'Sources') {
+  const safe = (sources || []).filter((x) => /^https?:\/\//i.test(x.url));
+  if (!safe.length) return null;
+  return h('details', { class: 'sources', open: title === 'Sources' },
+    h('summary', { class: 'small' }, `🔗 ${title} (${safe.length})`),
+    h('ol', { class: 'small' }, safe.map((x) => h('li', {},
+      h('a', { href: x.url, target: '_blank', rel: 'noopener noreferrer' }, x.title || x.url),
+      h('span', { class: 'muted' }, ` · ${new URL(x.url).hostname}`)))));
+}
+
+/**
+ * One switch per built-in tool in tools.json (e.g. "Web search"). For a new conversation it sets the
+ * starting value; for an existing one it updates the conversation and applies from the next run or
+ * retry. Switches only allow a tool; the model decides when to use it.
+ */
+function toolToggles(d) {
+  return (ui.app.tools || []).map((tool) => {
+    const stored = d ? d.conversation.tools?.[tool.id] ?? (tool.id === 'web_search' ? d.conversation.webSearch : undefined) : ui.newTools[tool.id];
+    const on = typeof stored === 'boolean' ? stored : tool.defaultEnabled;
+    return h('label', { style: 'margin:0', title: tool.description },
+      h('input', {
+        type: 'checkbox', checked: on,
+        onchange: (e) => {
+          if (d) act(() => send('updateConversation', { conversationId: d.conversation.id, patch: { tools: { [tool.id]: e.target.checked } } }));
+          else ui.newTools = { ...ui.newTools, [tool.id]: e.target.checked };
+        },
+      }),
+      ` ${tool.label}`);
+  });
 }
 
 function promptCard() {
@@ -376,6 +411,7 @@ function promptCard() {
     h('div', { class: 'thumbs' }, ui.attachments.map((a, i) => h('img', { src: a.url, title: 'Click to remove', onclick: () => { ui.attachments.splice(i, 1); render(); } }))),
     h('div', { class: 'row', style: 'margin-top:8px' },
       h('label', { style: 'margin:0' }, 'Images ', file),
+      ...toolToggles(d),
       cap ? h('span', { class: 'small muted' }, 'Cap USD ', cap) : null,
       h('span', { class: 'grow' }),
       h('button', {
@@ -386,6 +422,7 @@ function promptCard() {
             conversationId: ui.convId, prompt: ui.promptDraft,
             images: ui.attachments.map(({ media_type, base64 }) => ({ media_type, base64 })),
             capUsd: cap ? Number(cap.value) : undefined,
+            tools: ui.newTools,
           });
           ui.convId = res.conversationId;
           ui.promptDraft = '';
@@ -460,6 +497,10 @@ function capabilityInfo(cfg, model) {
   return h('div', { class: 'small', style: 'margin-top:6px' },
     h('div', {}, `${c.reasoning ? '🟢' : '⚪'} Reasoning: ${reasoningText}`),
     h('div', {}, `${c.imageInput ? '🟢' : '⚪'} Image input: ${c.imageInput ? 'Supported' : 'Not supported (prompts with images will be blocked)'}`),
+    ...(ui.app.tools || []).map((t) => {
+      const ok = (c.tools || []).includes(t.id);
+      return h('div', {}, `${ok ? '🟢' : '⚪'} ${t.label}: ${ok ? 'Supported (used when the conversation allows it)' : 'Not supported for this model'}`);
+    }),
     c.reasoning && c.thinkingIsOptional ? h('label', {},
       h('input', { type: 'checkbox', checked: !!cfg.extendedThinking, onchange: (e) => { cfg.extendedThinking = e.target.checked; render(); } }),
       ' Use extended thinking: better on hard tasks, but slower and costs more (thinking tokens are billed)') : null,

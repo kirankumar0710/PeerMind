@@ -10,16 +10,17 @@ export function hasPricing(pricing) {
  * Returns USD or null ("Not available") when pricing or token counts are missing.
  * When the prompt exceeds pricing.longContext.aboveTokens, the long-context rates apply to the whole call.
  */
-export function costUsd(pricing, inputTokens, outputTokens) {
+export function costUsd(pricing, inputTokens, outputTokens, webSearches = 0) {
   if (!hasPricing(pricing) || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return null;
   const lc = pricing.longContext;
   const rates = lc && inputTokens > lc.aboveTokens && hasPricing(lc) ? lc : pricing;
-  return (inputTokens * rates.inputPerMTok + outputTokens * rates.outputPerMTok) / 1e6;
+  const searchCost = (webSearches || 0) * (pricing.perSearchUsd || 0);
+  return (inputTokens * rates.inputPerMTok + outputTokens * rates.outputPerMTok) / 1e6 + searchCost;
 }
 
-/** A user-entered price wins; otherwise the built-in default; otherwise null. */
+/** A user-entered token price wins; otherwise the built-in default; otherwise null. Search fees come from the default. */
 export function effectivePricing(override, fallback) {
-  if (hasPricing(override)) return { ...override, source: 'custom' };
+  if (hasPricing(override)) return { ...override, perSearchUsd: fallback?.perSearchUsd ?? override.perSearchUsd ?? 0, source: 'custom' };
   return fallback || null;
 }
 
@@ -33,7 +34,7 @@ export function checkReserve({ capUsd, spentUsd, enforced, items }) {
   if (!enforced) return { ok: true };
   let required = 0;
   for (const it of items) {
-    const c = costUsd(it.pricing, it.inputTokens, it.outputTokens);
+    const c = costUsd(it.pricing, it.inputTokens, it.outputTokens, it.webSearches || 0);
     if (c === null) return { ok: false, reason: 'MISSING_PRICING' };
     required += c;
   }

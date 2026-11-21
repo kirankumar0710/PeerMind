@@ -99,11 +99,13 @@ export const IMPORT_LIMITS = Object.freeze({
   entries: 2000,
 });
 
-export const DISCLOSURE_VERSION = 1;
+// Version 2 adds web search. A material change to this text requires a new acknowledgement (FR-096).
+export const DISCLOSURE_VERSION = 2;
 export const DISCLOSURE_TEXT =
   'Prompts, selected conversation context, attached images and generated content may be sent to this ' +
-  'external AI provider and processed under its terms and privacy policy. PeerMind stores conversation ' +
-  'data locally in this browser. Provider API usage is billed by the provider separately from any ' +
-  'consumer subscription.';
+  'external AI provider and processed under its terms and privacy policy. When web search is on, the ' +
+  'provider may also run web searches derived from your prompt and the answer, using its own search ' +
+  'service, and those searches are billed per call. PeerMind stores conversation data locally in this ' +
+  'browser. Provider API usage is billed by the provider separately from any consumer subscription.';
 
 export const MIN_JUSTIFICATION_CHARS = 20;

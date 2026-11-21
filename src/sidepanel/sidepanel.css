@@ -63,6 +63,10 @@ pre { white-space: pre-wrap; word-wrap: break-word; font-size: 11px; background:
 dialog { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); max-width: 420px; }
 dialog::backdrop { background: rgb(0 0 0 / .35); }
 .error { color: var(--bad); }
+.sources { margin-top: 6px; }
+.sources ol { margin: 4px 0 0 18px; padding: 0; }
+.sources li { margin: 2px 0; word-break: break-word; }
+.sources a { color: var(--accent); }
 .save-bar { position: sticky; bottom: 0; z-index: 1; background: var(--bg); border-top: 1px solid var(--border); padding: 8px 0; margin-top: 8px; }
 .save-bar > span:not(.grow) { text-align: right; font-weight: 600; max-width: 70%; }
 .thinking::after { content: "…"; animation: dots 1.2s steps(3) infinite; }

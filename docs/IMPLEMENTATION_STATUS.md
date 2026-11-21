@@ -33,6 +33,26 @@ This covers version 0.1.0, the first implementation pass. **Tested** means cover
 | One package for both browsers; static compatibility check | §16.2, FR-101–104, AC-49 | `tools/package.mjs`, `tools/check-compat.mjs` | Done |
 | Side panel: config, run controls, result, labels, findings, history, timeline, usage, recovery, settings | §12 | `sidepanel/` | Unverified in browser |
 
+## Added beyond spec v1.8: web search (live information)
+
+The product owner approved this on 2026-11-21. Spec v1.8 has no tools. A spec amendment should record:
+
+| Decision | Implementation |
+|---|---|
+| Use each provider's built-in, server-run web search (no PeerMind-run tools, no extra keys) | OpenAI `web_search` tool, Anthropic `web_search_20260209` / `web_search_20250305` (`max_uses` 5), Gemini Grounding with Google Search. All tool mappings, model patterns and per-call prices live in **`src/providers/tools.json`**, read by `providers/tools.js`. |
+| Both roles may search; the model decides when. The Reviewer is told to fact-check time-sensitive claims. | `WEB_SEARCH_RULES` in `core/context.js` |
+| One per-conversation switch per tool, on by default (`defaultEnabled`). It applies from the next run or retry. | `conversation.tools` (`{ web_search: true }`; older conversations' `webSearch` flag is still read); checkboxes generated from `tools.json` |
+| Sources are shown with the answer and stored in messages and exports | the transport collects cited links (falls back to search results), http/https only |
+| Search fees count toward usage and the budget reserve (the tool's `max_uses`, else 5, assumed per call) | `pricePerCall` in `tools.json` |
+| The disclosure text mentions web search. It's a material change, so it's re-acknowledged (FR-096). | `DISCLOSURE_VERSION` 2 |
+
+Notes and limits:
+- **Gemini Google Search grounding and FR-102.** FR-102 bans Google services in PeerMind's own infrastructure, but user-selected provider APIs, including Gemini, are explicitly outside that rule. Grounding is part of the Gemini API the user chose, so it stays within scope.
+- **JSON mode is off while search is on** (OpenAI `text.format`, Gemini `responseMimeType`), because those modes can't be combined with tools on all models. The prompt and the strict validator still require one JSON object, so corrective retries may happen a little more often.
+- **Text written before a search is dropped** (for example "Let me search…"). The answer is the text after the last tool result. This is a structural rule, not best-effort extraction (FR-029).
+- **Anthropic `pause_turn` is not resumed yet.** If Claude's server-side search loop pauses, the operation fails with the raw stop reason, and Retry runs it again.
+- **Gemini's search price ($14 per 1,000) comes from a secondary source.** Verify it against Google's pricing page. OpenAI and Anthropic are $10 per 1,000.
+
 ## Not built yet
 
 | Area | Spec | Notes |

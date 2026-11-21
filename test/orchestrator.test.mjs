@@ -17,6 +17,7 @@ globalThis.chrome = { storage: { local: area(), session: area() }, runtime: { ge
 // ---- provider stub: queued model replies per vendor
 const queues = { openai: [], anthropic: [] };
 let lastBody = null;
+const bodies = { openai: [], anthropic: [] };
 const calls = { openai: 0, anthropic: 0 };
 const sse = (lines) => new Response(new ReadableStream({
   start(c) { const e = new TextEncoder(); for (const l of lines) c.enqueue(e.encode(l)); c.close(); },
@@ -27,14 +28,22 @@ globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
   if (method === 'GET' && url.includes('anthropic.com')) return Response.json({ data: [{ id: 'claude-test', display_name: 'Claude Test' }, { id: 'claude-sonnet-4-5' }] });
   lastBody = body;
   const vendor = url.includes('openai.com') ? 'openai' : 'anthropic';
+  bodies[vendor].push(JSON.parse(body));
   calls[vendor] += 1;
   const next = queues[vendor].shift();
   if (!next) throw new Error(`No scripted reply for ${vendor}`);
   if (next.streamError) return sse([`data: ${next.streamError}\n\n`]); // provider error mid-stream
-  const text = typeof next === 'string' ? next : JSON.stringify(next);
+  // { searchedReply, sourceUrl }: a reply preceded by one web search and followed by a citation
+  const searched = next.searchedReply;
+  const text = JSON.stringify(searched || next);
   if (vendor === 'openai') {
     return sse([
+      ...(searched ? [
+        `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'Let me look that up.' })}\n\n`,
+        `data: ${JSON.stringify({ type: 'response.web_search_call.completed' })}\n\n`,
+      ] : []),
       `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: text })}\n\n`,
+      ...(searched ? [`data: ${JSON.stringify({ type: 'response.output_text.annotation.added', annotation: { type: 'url_citation', url: next.sourceUrl, title: 'Live source' } })}\n\n`] : []),
       `data: ${JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1000, output_tokens: 500 } } })}\n\n`,
     ]);
   }
@@ -47,6 +56,10 @@ globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
 };
 
 const { saveSettings, setKey } = await import('../src/storage/settings.js');
+// The extension fetches tools.json from its package; here the real file is read from disk.
+const { loadToolRegistry } = await import('../src/providers/tools.js');
+const { readFileSync } = await import('node:fs');
+await loadToolRegistry(async () => JSON.parse(readFileSync(new URL('../src/providers/tools.json', import.meta.url), 'utf8')));
 const orch = await import('../src/background/orchestrator.js');
 const { get, loadConversation } = await import('../src/storage/db.js');
 const { RunState: S, CompletionReason: CR, ReviewStatus, DISCLOSURE_VERSION } = await import('../src/core/constants.js');
@@ -206,6 +219,39 @@ test('a provider error is shown raw, prefixed with the role and model that faile
   assert.equal(run.state, S.FAILED);
   assert.equal(run.failure.message, `Generator · OpenAI gpt-test: ${raw}`);
   await orch.abandon(runId);
+});
+
+test('web search: sent to both roles when allowed; preamble dropped, sources and search fee recorded', async () => {
+  await configure({
+    pricing: {},
+    generator: { provider: 'openai', model: 'gpt-5.1', maxOutputTokens: 1000, contextWindow: 100000 },
+    reviewer: { provider: 'anthropic', model: 'claude-sonnet-4-5', maxOutputTokens: 4000, contextWindow: 100000 },
+  });
+  bodies.openai.length = 0;
+  bodies.anthropic.length = 0;
+  queues.openai.push({ searchedReply: { protocol_version: '1.0', summary: 'live', response: 'NVDA is $148.52' }, sourceUrl: 'https://finance.example/nvda' });
+  queues.anthropic.push(R([], 'NO_MATERIAL_ISSUES'));
+  const { runId, conversationId } = await orch.submitPrompt({ prompt: 'NVIDIA price today?', capUsd: 5 });
+  const run = await settle(runId);
+  assert.equal(run.completionReason, CR.NO_MATERIAL_ISSUES);
+  assert.deepEqual(bodies.openai[0].tools, [{ type: 'web_search' }]);
+  assert.equal(bodies.anthropic[0].tools[0].name, 'web_search');
+  const data = await loadConversation(conversationId);
+  const out = data.messages.find((m) => m.kind === 'g_output');
+  assert.equal(out.text, 'NVDA is $148.52'); // "Let me look that up." preamble discarded
+  assert.deepEqual(out.sources, [{ url: 'https://finance.example/nvda', title: 'Live source' }]);
+  const gOp = data.operations.find((o) => o.role === 'G');
+  assert.equal(gOp.usage.webSearches, 1);
+  assert.ok(Math.abs(gOp.costUsd - ((1000 * 1.25 + 500 * 10) / 1e6 + 0.01)) < 1e-9); // tokens + one search
+
+  // Turning web search off for the conversation removes the tool from the next run.
+  await orch.updateConversation(conversationId, { webSearch: false });
+  queues.openai.push(G0);
+  queues.anthropic.push(R([], 'NO_MATERIAL_ISSUES'));
+  const second = await orch.submitPrompt({ conversationId, prompt: 'Explain it', capUsd: 5 });
+  await settle(second.runId);
+  assert.equal(bodies.openai[1].tools, undefined);
+  assert.equal(bodies.anthropic[1].tools, undefined);
 });
 
 test('missing pricing fails pre-flight with PRICING action; proceeding unenforced works (FR-081)', async () => {

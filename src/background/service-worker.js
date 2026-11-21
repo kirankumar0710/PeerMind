@@ -7,6 +7,7 @@ import { enableActionOpensPanel, openConversationUi, notificationsAvailable } fr
 import { DISCLOSURE_VERSION, RunState } from '../core/constants.js';
 import { isTerminal } from '../core/state-machine.js';
 import { redact } from '../providers/transport.js';
+import { loadToolRegistry, toolsForModel } from '../providers/tools.js';
 
 // ---- panel connections: notifications are only issued while no panel is open
 const panelPorts = new Set();
@@ -62,11 +63,14 @@ const handlers = {
       tx(['runs'], 'readonly', (s) => s.runs.all()),
     ]);
     const lock = await get('meta', 'globalLock');
+    const registry = await loadToolRegistry();
     const { focusConversation } = await chrome.storage.session.get('focusConversation');
     if (focusConversation) await chrome.storage.session.remove('focusConversation');
     return {
       settings, keys, globalLockRunId: lock?.runId || null, focusConversation: focusConversation || null,
       providers: Object.entries(ADAPTERS).map(([id, a]) => ({ id, label: a.label, vendor: a.vendor })),
+      // Built-in tools from tools.json, for the panel's per-conversation switches.
+      tools: Object.values(registry.tools).map(({ id, label, description, defaultEnabled }) => ({ id, label, description, defaultEnabled })),
       conversations: conversations
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map((c) => {
@@ -89,11 +93,18 @@ const handlers = {
   async listModels({ provider }) {
     const key = await getKey(provider);
     if (!key) throw new Error('Add an API key first.');
+    let models;
     try {
-      return await ADAPTERS[provider].listModels(key);
+      models = await ADAPTERS[provider].listModels(key);
     } catch (e) {
       throw new Error(redact(e.message, key));
     }
+    // Which built-in tools each model supports, from tools.json.
+    const registry = await loadToolRegistry();
+    return models.map((m) => ({
+      ...m,
+      capabilities: { ...m.capabilities, tools: toolsForModel(registry, ADAPTERS[provider].vendor, m.id).map((t) => t.id) },
+    }));
   },
   async ackDisclosure({ provider }) {
     const s = await getSettings();

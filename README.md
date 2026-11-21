@@ -54,6 +54,8 @@ It creates `dist/peermind-<version>.zip` and the unzipped `dist/peermind-<versio
    - Click **Save settings**.
 5. Open **Run**, type a prompt and press **Start**.
 
+**Web search (live information).** With **Web search** ticked in the prompt box (the default), the Generator and Reviewer can use their provider's built-in web search when a prompt needs current information. The Reviewer also uses it to fact-check. Sources are listed under the answer. Searches are billed per call by the provider (about $10–14 per 1,000) and count toward the conversation's budget cap. Untick the box to turn search off for that conversation.
+
 Reasoning support and image input are detected from the model name and shown under each role as information. For reasoning models, PeerMind requests progress signals automatically so that slow first responses stay within the timeouts (FR-092). The only choice is **Use extended thinking** on Claude models that support it. It is better on hard tasks, but slower and costs more.
 
 ## Develop
@@ -67,6 +69,16 @@ npm run check:compat  # AC-49 static check: no browser branching outside src/com
 npm run package       # dist/peermind-<version>.zip plus its SHA-256 (the same package for Brave and Chrome)
 npm run icons -- path/to/source.png   # rebuild icons/icon{16,32,48,128}.png from one square image (needs Python + Pillow)
 ```
+
+### Built-in tools (`src/providers/tools.json`)
+
+Each vendor's built-in tools, such as web search, are described in **one data file**. The adapters, pre-flight, budget and UI all read it. For each tool it lists, per vendor, ordered variants (the first whose `models` regex matches the model ID wins): the `request` object sent to the vendor exactly as written, and the `pricePerCall` fee.
+
+- **A vendor ships a new tool version or supports more models:** edit the variant's `request` or `models`. No code change is needed.
+- **Adding another tool of a kind PeerMind already displays** (`"result": "sources"`): add an entry. Its switch appears in the prompt box automatically.
+- **A tool with a new kind of result** (for example images): needs a small result handler in the adapters and UI.
+
+`npm test` checks the file. A bad regex, a missing price or an unknown result kind fails the build.
 
 ### Signed `.crx` for distribution (optional)
 

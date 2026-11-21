@@ -47,6 +47,7 @@ export function classifyGeminiModel(id, methods = []) {
 //   reasoning:  the model emits a reasoning/thinking stream PeerMind can request (FR-092)
 //   imageInput: the model accepts images in the prompt (§8.1)
 //   thinkingIsOptional: reasoning is a separate opt-in that changes cost and output (Claude extended thinking)
+//   Built-in tools (web search, …) are NOT detected here: they come from src/providers/tools.json.
 
 export function openAiCapabilities(id) {
   return {
@@ -87,6 +88,9 @@ export function geminiCapabilities(id) {
   };
 }
 
+const isHttpUrl = (u) => typeof u === 'string' && /^https?:\/\//i.test(u);
+const source = (url, title, cited) => (isHttpUrl(url) ? [{ type: 'source', url, title: title || url, cited }] : []);
+
 /** Supported models first, then alphabetical. */
 const sortModels = (list) => list.sort((a, b) => (b.supported - a.supported) || a.id.localeCompare(b.id));
 
@@ -98,7 +102,7 @@ const openai = {
     const r = await jsonCall('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` }, apiKey });
     return sortModels(r.data.map((m) => ({ id: m.id, ...classifyOpenAiModel(m.id), capabilities: openAiCapabilities(m.id) })));
   },
-  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
+  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning, tools = [], jsonMode = true }) {
     const input = messages.map((m) => (m.role === 'assistant'
       ? { role: 'assistant', content: [{ type: 'output_text', text: m.text }] }
       : {
@@ -111,8 +115,12 @@ const openai = {
     const body = {
       model, instructions: system, input, stream: true, store: false,
       max_output_tokens: maxOutputTokens,
-      text: { format: { type: 'json_object' } },
     };
+    // Built-in tools from tools.json, sent as written; the model decides when to use them.
+    if (tools.length) body.tools = tools;
+    // JSON mode can be off with tools (tools.json vendorOptions); the prompt and the strict
+    // validator still require a single JSON object.
+    if (jsonMode) body.text = { format: { type: 'json_object' } };
     if (reasoning) body.reasoning = { summary: 'auto' }; // FR-092: request reasoning-summary stream
     return {
       url: 'https://api.openai.com/v1/responses',
@@ -128,6 +136,14 @@ const openai = {
       case 'response.reasoning_summary_text.delta':
       case 'response.reasoning_text.delta':
         return [{ type: 'reasoning' }];
+      case 'response.web_search_call.in_progress':
+      case 'response.web_search_call.searching':
+        return [{ type: 'activity' }];
+      case 'response.web_search_call.completed':
+        // Text written before a search is preamble, not the answer.
+        return [{ type: 'search' }, { type: 'content-reset' }];
+      case 'response.output_text.annotation.added':
+        return e.annotation?.type === 'url_citation' ? source(e.annotation.url, e.annotation.title, true) : [{ type: 'meta' }];
       case 'response.completed':
       case 'response.incomplete': {
         const u = e.response?.usage;
@@ -163,7 +179,7 @@ const anthropic = {
       ...(Number.isFinite(m.max_tokens) ? { maxOutput: m.max_tokens } : {}),
     })));
   },
-  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
+  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning, tools = [] }) {
     const caps = anthropicCapabilities(model);
     const body = {
       model, system, stream: true, max_tokens: maxOutputTokens,
@@ -191,6 +207,8 @@ const anthropic = {
         body.thinking = { type: 'adaptive', display: 'summarized' };
       }
     }
+    // Built-in (server) tools from tools.json, sent as written; Claude decides when to use them.
+    if (tools.length) body.tools = tools;
     return { url: 'https://api.anthropic.com/v1/messages', headers: ANTHROPIC_HEADERS(apiKey), body };
   },
   parseEvent({ event, data }) {
@@ -199,15 +217,33 @@ const anthropic = {
     switch (event) {
       case 'message_start':
         return [{ type: 'usage', inputTokens: e.message?.usage?.input_tokens ?? null }];
+      case 'content_block_start': {
+        const cb = e.content_block || {};
+        if (cb.type === 'server_tool_use') return [cb.name === 'web_search' ? { type: 'search' } : { type: 'activity' }];
+        if (typeof cb.type === 'string' && cb.type.endsWith('_tool_result')) {
+          // Text before a tool result is preamble ("Let me search…"), not the answer.
+          const results = Array.isArray(cb.content) ? cb.content.filter((r) => r?.type === 'web_search_result') : [];
+          return [{ type: 'content-reset' }, ...results.flatMap((r) => source(r.url, r.title, false))];
+        }
+        return [{ type: 'meta' }];
+      }
       case 'content_block_delta':
         if (e.delta?.type === 'text_delta') return [{ type: 'content', text: e.delta.text }];
         if (e.delta?.type === 'thinking_delta') return [{ type: 'reasoning' }];
+        if (e.delta?.type === 'citations_delta') return source(e.delta.citation?.url, e.delta.citation?.title, true);
+        if (e.delta?.type === 'input_json_delta') return [{ type: 'activity' }]; // server tool input streaming
         return [{ type: 'meta' }]; // signature_delta etc.
-      case 'message_delta':
+      case 'message_delta': {
+        if (e.delta?.stop_reason === 'pause_turn') {
+          // The server-side search loop hit its iteration limit; resuming is not supported yet.
+          return [{ type: 'error', message: `pause_turn (server-side search loop paused before finishing): ${rawStreamError(data)}` }];
+        }
+        const searches = e.usage?.server_tool_use?.web_search_requests;
         return [
-          { type: 'usage', outputTokens: e.usage?.output_tokens ?? null },
+          { type: 'usage', outputTokens: e.usage?.output_tokens ?? null, ...(Number.isFinite(searches) ? { webSearches: searches } : {}) },
           ...(e.delta?.stop_reason ? [{ type: 'finish', reason: e.delta.stop_reason }] : []),
         ];
+      }
       case 'error': return [{ type: 'error', message: rawStreamError(data) }];
       default: return [{ type: 'meta' }]; // ping, message_stop, content_block_start/stop
     }
@@ -229,8 +265,10 @@ const gemini = {
       };
     }));
   },
-  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
-    const generationConfig = { maxOutputTokens, responseMimeType: 'application/json' };
+  buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning, tools = [], jsonMode = true }) {
+    // JSON mode can be off with tools (tools.json vendorOptions); the prompt and the strict
+    // validator still require a single JSON object.
+    const generationConfig = { maxOutputTokens, ...(jsonMode ? { responseMimeType: 'application/json' } : {}) };
     if (reasoning) generationConfig.thinkingConfig = { includeThoughts: true }; // FR-092
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
@@ -245,6 +283,7 @@ const gemini = {
           ],
         })),
         generationConfig,
+        ...(tools.length ? { tools } : {}), // built-in tools from tools.json, e.g. Grounding with Google Search
       },
     };
   },
@@ -257,6 +296,11 @@ const gemini = {
     for (const part of cand?.content?.parts || []) {
       if (part.thought) out.push({ type: 'reasoning' });
       else if (typeof part.text === 'string' && part.text.length) out.push({ type: 'content', text: part.text });
+    }
+    const g = cand?.groundingMetadata;
+    if (g) {
+      for (const c of g.groundingChunks || []) out.push(...source(c.web?.uri, c.web?.title, true));
+      if (Array.isArray(g.webSearchQueries) && g.webSearchQueries.length) out.push({ type: 'usage', webSearches: g.webSearchQueries.length });
     }
     if (e.usageMetadata) {
       const u = e.usageMetadata;

@@ -27,6 +27,13 @@ export function redact(text, secret) {
   return out.replace(/(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]+/g, '$1***').replace(/(AIza[0-9A-Za-z_-]{4})[0-9A-Za-z_-]+/g, '$1***');
 }
 
+/** Sources shown with an answer: the ones the model cited; if it cited none, the results it searched. */
+export function pickSources(map, max = 20) {
+  const all = [...map.values()];
+  const cited = all.filter((s) => s.cited);
+  return (cited.length ? cited : all).slice(0, max).map(({ url, title }) => ({ url, title }));
+}
+
 /** Incremental Server-Sent Events parser. Comment lines (": ping") are dropped. */
 export function createSseParser() {
   let buffer = '';
@@ -74,7 +81,14 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
     else signal.addEventListener('abort', onAbort, { once: true });
   }
 
-  const state = { text: '', usage: { inputTokens: null, outputTokens: null }, finish: null, gotContent: false, headers: false };
+  const state = {
+    text: '', usage: { inputTokens: null, outputTokens: null, webSearches: 0 }, finish: null, gotContent: false, headers: false,
+    sources: new Map(), // url -> { url, title, cited }
+  };
+  const live = (kind) => {
+    arm(state.gotContent ? t.inactivityMs : t.firstContentMs, state.gotContent ? 'no stream activity' : 'waiting for first content');
+    onActivity?.(kind);
+  };
   let timer = null;
   let timeoutError = null;
   const arm = (ms, what) => {
@@ -132,11 +146,23 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
             onActivity?.('content');
           } else if (out.type === 'reasoning') {
             // FR-093: reasoning content is never kept; it only proves liveness.
-            arm(state.gotContent ? t.inactivityMs : t.firstContentMs, state.gotContent ? 'no stream activity' : 'waiting for first content');
-            onActivity?.('reasoning');
+            live('reasoning');
+          } else if (out.type === 'search') {
+            state.usage.webSearches += 1; // provider-reported totals (usage.webSearches) override this count
+            live('search');
+          } else if (out.type === 'activity') {
+            live('search'); // server-side tool progress
+          } else if (out.type === 'content-reset') {
+            // Text before a tool result was preamble ("Let me search…"); the answer comes after it.
+            state.text = '';
+            live('search');
+          } else if (out.type === 'source') {
+            const prev = state.sources.get(out.url);
+            state.sources.set(out.url, { url: out.url, title: out.title || prev?.title || out.url, cited: !!(out.cited || prev?.cited) });
           } else if (out.type === 'usage') {
             if (out.inputTokens != null) state.usage.inputTokens = out.inputTokens;
             if (out.outputTokens != null) state.usage.outputTokens = out.outputTokens;
+            if (out.webSearches != null) state.usage.webSearches = out.webSearches;
           } else if (out.type === 'finish') {
             state.finish = out.reason;
           } else if (out.type === 'error') {
@@ -147,7 +173,7 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
       }
     }
     clearTimeout(timer);
-    return { text: state.text, usage: state.usage, finish: state.finish };
+    return { text: state.text, usage: state.usage, finish: state.finish, sources: pickSources(state.sources) };
   } catch (e) {
     throw fail(e);
   } finally {
