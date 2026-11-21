@@ -20,6 +20,7 @@ This covers version 0.1.0, the first implementation pass. **Tested** means cover
 | Context priority, protected findings compacted but never removed, CONTEXT_LIMIT_EXCEEDED | §7.1, FR-066–068 | `core/context.js` | Tested |
 | Untrusted-content delimiting | §7.2, FR-065 | `context.js` | Tested |
 | Budget reserve (G + following R) before every G; missing pricing gives three choices; costs are estimates or "Not available" | §9.1–9.5, FR-027–028, FR-077–084 | `core/budget.js`, orchestrator | Tested |
+| Built-in default prices (dated, with long-context tiers and scheduled changes); a user override wins | §6.1 pricing metadata, §9.4 | `providers/pricing.js` | Tested. Prices checked 2026-11-21; they need updating when providers change prices. |
 | Streaming timeouts: 30 s headers, 180 s first content, 60 s inactivity; reasoning resets timers; pings don't | §10, FR-036–038 | `providers/transport.js` | Tested with a stubbed stream |
 | Reasoning content never kept (liveness signal only) | §10.1, FR-092–093 | adapters, transport | Tested |
 | Keys session-only, masked, redacted from errors | §6.3, FR-005–006 | `storage/settings.js`, `redact` | Tested (redaction) |
@@ -52,4 +53,5 @@ This covers version 0.1.0, the first implementation pass. **Tested** means cover
 3. **User-attached images are neither GENERATED nor EDITED** (§8.2). The code records `operation: "UPLOADED"`.
 4. **Corrective retries are not in the §9.3 reserve.** A retry that doesn't fit ends the run with BUDGET_REACHED.
 5. **Anthropic has no JSON mode.** Strict parsing (no fence stripping) may cost extra corrective retries with Claude as Generator or Reviewer.
-6. **Token estimates are approximate** (characters ÷ 4) for context and pre-call cost. Recorded costs use the token counts the provider reports.
+6. **Model capabilities come from the model name.** Provider model lists don't report reasoning or image support (Gemini partly does). PeerMind derives them from the model ID and shows them as information. Unrecognised models count as not capable (§6.1). A brand-new model family needs its pattern added in `providers/adapters.js`.
+7. **Token estimates are approximate** (characters ÷ 4) for context and pre-call cost. Recorded costs use the token counts the provider reports.

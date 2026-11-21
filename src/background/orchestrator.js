@@ -8,7 +8,8 @@ import { assertTransition, holdsGlobalLock, isTerminal, stopOutcome, TransitionE
 import { parseStrictJson, validateInitialG, validateRefinement } from '../core/protocol.js';
 import { applyReviewReport } from '../core/findings.js';
 import { buildRequest, correctiveMessage } from '../core/context.js';
-import { checkReserve, costUsd, hasPricing } from '../core/budget.js';
+import { checkReserve, costUsd, hasPricing, effectivePricing } from '../core/budget.js';
+import { defaultPricing } from '../providers/pricing.js';
 import { uid, nowIso, formatAssetId, sha256Hex, base64ToBytes, bytesToBase64, MEDIA_EXT } from '../core/util.js';
 import { ADAPTERS, vendorOf } from '../providers/adapters.js';
 import { streamCall, ProviderError } from '../providers/transport.js';
@@ -280,15 +281,13 @@ async function preflight(run) {
       return { message: `Acknowledge the data disclosure for ${ADAPTERS[p].label} before its first use.`, action: 'DISCLOSURE' };
     }
   }
-  if (run.imageAssetIds.length && (!g.imageInput || !r.imageInput)) {
-    return { message: 'Images are attached but image input is not enabled for both selected models.', action: 'SETTINGS' };
-  }
   const missing = [];
   for (const p of new Set([g.provider, r.provider])) if (!(await getKey(p))) missing.push(ADAPTERS[p].label);
   if (missing.length) return { message: `API key needed for: ${missing.join(', ')}.`, action: 'MISSING_KEYS' };
 
-  // Authentication, connectivity and model usability with this key.
-  for (const cfg of [g, r]) {
+  // Authentication, connectivity, model usability with this key, and detected capabilities.
+  const resolved = {};
+  for (const [role, cfg] of [['generator', g], ['reviewer', r]]) {
     const models = await ADAPTERS[cfg.provider].listModels(await getKey(cfg.provider));
     const m = models.find((x) => x.id === cfg.model);
     if (!m) return { message: `Model "${cfg.model}" is not available from ${ADAPTERS[cfg.provider].label} with this API key.`, action: 'SETTINGS' };
@@ -296,16 +295,28 @@ async function preflight(run) {
     if (m.maxOutput && cfg.maxOutputTokens > m.maxOutput) {
       return { message: `Max output tokens for ${cfg.model} exceed the model maximum (${m.maxOutput}).`, action: 'SETTINGS' };
     }
+    const caps = m.capabilities || { reasoning: false, imageInput: false, thinkingIsOptional: false };
+    if (run.imageAssetIds.length && !caps.imageInput) {
+      return { message: `Images are attached, but ${cfg.model} does not accept image input. Choose a model that does, or remove the images.`, action: 'SETTINGS' };
+    }
+    resolved[role] = {
+      ...cfg,
+      // FR-092: request the reasoning stream whenever the model offers one; for Claude only when
+      // extended thinking is chosen, because that changes cost and output.
+      reasoning: caps.reasoning && (!caps.thinkingIsOptional || cfg.extendedThinking === true),
+      imageInput: caps.imageInput,
+    };
   }
 
-  const pricingG = settings.pricing[pricingKey(g.provider, g.model)] || null;
-  const pricingR = settings.pricing[pricingKey(r.provider, r.model)] || null;
+  // A custom price entered in Settings wins; otherwise the built-in default for that model.
+  const pricingG = effectivePricing(settings.pricing[pricingKey(g.provider, g.model)], defaultPricing(g.provider, g.model));
+  const pricingR = effectivePricing(settings.pricing[pricingKey(r.provider, r.model)], defaultPricing(r.provider, r.model));
   if (conv.budgetEnforced && (!hasPricing(pricingG) || !hasPricing(pricingR))) {
     return { message: 'Pricing is missing for a selected model.', action: 'PRICING' };
   }
 
   const config = {
-    generator: { ...g }, reviewer: { ...r }, iterationLimit: limit, timeouts: { ...settings.timeouts }, pricingG, pricingR,
+    generator: resolved.generator, reviewer: resolved.reviewer, iterationLimit: limit, timeouts: { ...settings.timeouts }, pricingG, pricingR,
   };
   await tx(['runs'], 'readwrite', async (s) => {
     const cur = await s.runs.get(run.id);

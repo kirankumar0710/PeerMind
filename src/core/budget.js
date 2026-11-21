@@ -6,10 +6,21 @@ export function hasPricing(pricing) {
     pricing.inputPerMTok >= 0 && pricing.outputPerMTok >= 0;
 }
 
-/** Returns USD or null ("Not available") when pricing or token counts are missing. */
+/**
+ * Returns USD or null ("Not available") when pricing or token counts are missing.
+ * When the prompt exceeds pricing.longContext.aboveTokens, the long-context rates apply to the whole call.
+ */
 export function costUsd(pricing, inputTokens, outputTokens) {
   if (!hasPricing(pricing) || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return null;
-  return (inputTokens * pricing.inputPerMTok + outputTokens * pricing.outputPerMTok) / 1e6;
+  const lc = pricing.longContext;
+  const rates = lc && inputTokens > lc.aboveTokens && hasPricing(lc) ? lc : pricing;
+  return (inputTokens * rates.inputPerMTok + outputTokens * rates.outputPerMTok) / 1e6;
+}
+
+/** A user-entered price wins; otherwise the built-in default; otherwise null. */
+export function effectivePricing(override, fallback) {
+  if (hasPricing(override)) return { ...override, source: 'custom' };
+  return fallback || null;
 }
 
 /**

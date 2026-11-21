@@ -49,12 +49,12 @@ It creates `dist/peermind-<version>.zip` and the unzipped `dist/peermind-<versio
 4. Go to **Settings** and do the following:
    - Add API keys for two different vendors. Keys are kept for the browser session only.
    - Click **Test**, then **Load models** and pick a Generator and a Reviewer model.
-   - Enter pricing per model in USD per 1M tokens. Without pricing you can only run with the budget cap disabled.
+   - Check the price for each model. Built-in default prices fill in automatically, and each shows its "as of" date. Edit a price to override it, or click **Use default** to go back. A model with no built-in price needs one entered, or it can only run with the budget cap disabled. Defaults live in `src/providers/pricing.js`; update them when providers change their prices.
    - Acknowledge the data disclosure for each provider.
    - Click **Save settings**.
 5. Open **Run**, type a prompt and press **Start**.
 
-To get a reasoning model's thinking events (FR-092), tick its "Reasoning model" box. This keeps slow first responses within the timeouts. Only tick it for models that support reasoning, because the provider rejects the parameter otherwise.
+Reasoning support and image input are detected from the model name and shown under each role as information. For reasoning models, PeerMind requests progress signals automatically so that slow first responses stay within the timeouts (FR-092). The only choice is **Use extended thinking** on Claude models that support it. It is better on hard tasks, but slower and costs more.
 
 ## Develop
 
@@ -65,7 +65,7 @@ npm install           # dev-only: fake-indexeddb for the end-to-end tests
 npm test              # unit tests and an end-to-end orchestrator test with stubbed providers
 npm run check:compat  # AC-49 static check: no browser branching outside src/compat/, no Google services
 npm run package       # dist/peermind-<version>.zip plus its SHA-256 (the same package for Brave and Chrome)
-npm run icons         # regenerate icons/
+npm run icons -- path/to/source.png   # rebuild icons/icon{16,32,48,128}.png from one square image (needs Python + Pillow)
 ```
 
 ### Signed `.crx` for distribution (optional)

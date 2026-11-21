@@ -16,14 +16,16 @@ globalThis.chrome = { storage: { local: area(), session: area() }, runtime: { ge
 
 // ---- provider stub: queued model replies per vendor
 const queues = { openai: [], anthropic: [] };
+let lastBody = null;
 const calls = { openai: 0, anthropic: 0 };
 const sse = (lines) => new Response(new ReadableStream({
   start(c) { const e = new TextEncoder(); for (const l of lines) c.enqueue(e.encode(l)); c.close(); },
 }), { status: 200 });
 
 globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
-  if (method === 'GET' && url.includes('openai.com')) return Response.json({ data: [{ id: 'gpt-test' }, { id: 'whisper-1' }] });
-  if (method === 'GET' && url.includes('anthropic.com')) return Response.json({ data: [{ id: 'claude-test', display_name: 'Claude Test' }] });
+  if (method === 'GET' && url.includes('openai.com')) return Response.json({ data: [{ id: 'gpt-test' }, { id: 'whisper-1' }, { id: 'gpt-5.1' }] });
+  if (method === 'GET' && url.includes('anthropic.com')) return Response.json({ data: [{ id: 'claude-test', display_name: 'Claude Test' }, { id: 'claude-sonnet-4-5' }] });
+  lastBody = body;
   const vendor = url.includes('openai.com') ? 'openai' : 'anthropic';
   calls[vendor] += 1;
   const next = queues[vendor].shift();
@@ -50,8 +52,8 @@ const { RunState: S, CompletionReason: CR, ReviewStatus, DISCLOSURE_VERSION } = 
 
 async function configure(patch = {}) {
   await saveSettings({
-    generator: { provider: 'openai', model: 'gpt-test', maxOutputTokens: 1000, contextWindow: 100000, reasoning: false, imageInput: false },
-    reviewer: { provider: 'anthropic', model: 'claude-test', maxOutputTokens: 1000, contextWindow: 100000, reasoning: false, imageInput: false },
+    generator: { provider: 'openai', model: 'gpt-test', maxOutputTokens: 1000, contextWindow: 100000 },
+    reviewer: { provider: 'anthropic', model: 'claude-test', maxOutputTokens: 1000, contextWindow: 100000, extendedThinking: false },
     iterationLimit: 3,
     pricing: { 'openai:gpt-test': { inputPerMTok: 1, outputPerMTok: 2 }, 'anthropic:claude-test': { inputPerMTok: 1, outputPerMTok: 2 } },
     disclosureAcks: { openai: DISCLOSURE_VERSION, anthropic: DISCLOSURE_VERSION },
@@ -165,6 +167,33 @@ test('pre-flight blocks a listed but unsupported model, and a model the key cann
   run = await settle(runId);
   assert.match(run.failure.message, /not available .* with this API key/);
   await orch.abandon(runId);
+});
+
+test('images are blocked at pre-flight when a selected model has no detected image input', async () => {
+  await configure();
+  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64');
+  const { runId } = await orch.submitPrompt({ prompt: 'describe', images: [{ media_type: 'image/png', base64: png }], capUsd: 5 });
+  const run = await settle(runId);
+  assert.match(run.failure.message, /does not accept image input/); // gpt-test / claude-test are not image models
+  await orch.abandon(runId);
+});
+
+test('built-in default prices let a run start with no pricing entered, and costs are recorded', async () => {
+  await configure({
+    pricing: {},
+    generator: { provider: 'openai', model: 'gpt-5.1', maxOutputTokens: 1000, contextWindow: 100000 },
+    reviewer: { provider: 'anthropic', model: 'claude-sonnet-4-5', maxOutputTokens: 4000, contextWindow: 100000, extendedThinking: true },
+  });
+  queues.openai.push(G0);
+  queues.anthropic.push(R([], 'NO_MATERIAL_ISSUES'));
+  const { runId, conversationId } = await orch.submitPrompt({ prompt: 'p', capUsd: 5 });
+  const run = await settle(runId);
+  assert.equal(run.completionReason, CR.NO_MATERIAL_ISSUES);
+  assert.equal(run.config.pricingG.source, 'default');
+  assert.equal(run.config.reviewer.reasoning, true); // Sonnet 4.5 + extended thinking opted in
+  assert.deepEqual(JSON.parse(lastBody).thinking, { type: 'enabled', budget_tokens: 2000 });
+  const data = await loadConversation(conversationId);
+  assert.ok(data.operations.every((o) => o.costUsd > 0));
 });
 
 test('missing pricing fails pre-flight with PRICING action; proceeding unenforced works (FR-081)', async () => {

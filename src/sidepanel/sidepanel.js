@@ -2,7 +2,8 @@
 // Untrusted content is only ever rendered with textContent, never as HTML.
 import { loadConversation } from '../storage/db.js';
 import { buildExportZip } from '../export/export.js';
-import { summarizeUsage } from '../core/budget.js';
+import { summarizeUsage, hasPricing } from '../core/budget.js';
+import { defaultPricing } from '../providers/pricing.js';
 import {
   RunState as S, CompletionReason as CR, DISCLOSURE_TEXT, DISCLOSURE_VERSION, ITERATION_LIMIT, ReviewStatus, OpState,
 } from '../core/constants.js';
@@ -10,7 +11,7 @@ import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
   tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '',
-  error: null, thinkingOp: null, settingsDraft: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
+  error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
 // ------------------------------------------------------------------ helpers
@@ -380,12 +381,51 @@ async function loadModels(provider) {
   }
 }
 
+/**
+ * Read-only capability information for the selected model, detected from the model ID.
+ * The only choice offered is Claude extended thinking, which changes cost and output.
+ */
+function capabilityInfo(cfg, model) {
+  if (!model?.capabilities) return null;
+  const c = model.capabilities;
+  const reasoningText = !c.reasoning ? 'Not a reasoning model'
+    : c.thinkingIsOptional ? (cfg.extendedThinking ? 'Extended thinking on' : 'Supports extended thinking (off)')
+    : c.thinkingMode === 'always' ? 'Thinking is always on for this model (thinking tokens are billed as output)'
+    : 'Reasoning model: progress signals requested automatically';
+  return h('div', { class: 'small', style: 'margin-top:6px' },
+    h('div', {}, `${c.reasoning ? '🟢' : '⚪'} Reasoning: ${reasoningText}`),
+    h('div', {}, `${c.imageInput ? '🟢' : '⚪'} Image input: ${c.imageInput ? 'Supported' : 'Not supported (prompts with images will be blocked)'}`),
+    c.reasoning && c.thinkingIsOptional ? h('label', {},
+      h('input', { type: 'checkbox', checked: !!cfg.extendedThinking, onchange: (e) => { cfg.extendedThinking = e.target.checked; render(); } }),
+      ' Use extended thinking: better on hard tasks, but slower and costs more (thinking tokens are billed)') : null,
+    h('div', { class: 'muted' }, 'Detected from the model name. Reasoning content is never shown or stored.'));
+}
+
+const vendorOfProvider = (id) => ui.app.providers.find((p) => p.id === id)?.vendor;
+
+/**
+ * FR-004: G and R must be different vendors. When the Generator moves onto the Reviewer's vendor,
+ * switch the Reviewer to the first provider from another vendor and clear its model.
+ */
+function ensureDifferentReviewer(s) {
+  ui.settingsNotice = null;
+  const gVendor = vendorOfProvider(s.generator.provider);
+  if (vendorOfProvider(s.reviewer.provider) !== gVendor) return;
+  const next = ui.app.providers.find((p) => p.vendor !== gVendor);
+  if (!next) return;
+  const from = ui.app.providers.find((p) => p.id === s.reviewer.provider)?.label;
+  s.reviewer.provider = next.id;
+  s.reviewer.model = '';
+  ui.settingsNotice = `Reviewer switched from ${from} to ${next.label}, because the Generator now uses ${from}. Choose a Reviewer model.`;
+}
+
 function renderSettings() {
   const root = document.getElementById('tab-settings');
   // Edits live in a draft until "Save settings", so re-renders never lose them.
   const s = (ui.settingsDraft ||= structuredClone(ui.app.settings));
   s.disclosureAcks = { ...ui.app.settings.disclosureAcks };
   const providers = ui.app.providers;
+  if (vendorOfProvider(s.generator.provider) === vendorOfProvider(s.reviewer.provider)) ensureDifferentReviewer(s);
 
   // Load model lists automatically for the selected providers once a key exists.
   for (const p of new Set([s.generator.provider, s.reviewer.provider])) {
@@ -434,8 +474,19 @@ function renderSettings() {
     return h('div', {},
       h('h3', {}, h('span', { class: cls }, title)),
       h('label', {}, 'Provider'),
-      h('select', { onchange: (e) => { cfg.provider = e.target.value; cfg.model = ''; render(); } },
-        providers.map((p) => h('option', { value: p.id, selected: p.id === cfg.provider }, `${p.label} (vendor: ${p.vendor})`))),
+      h('select', { onchange: (e) => {
+        cfg.provider = e.target.value;
+        cfg.model = '';
+        if (key === 'generator') ensureDifferentReviewer(s);
+        render();
+      } },
+      providers.map((p) => {
+        // FR-004: the Reviewer can never use the Generator's vendor, so that option is disabled.
+        const takenByGenerator = key === 'reviewer' && p.vendor === vendorOfProvider(s.generator.provider);
+        return h('option', { value: p.id, selected: p.id === cfg.provider, disabled: takenByGenerator },
+          `${p.label} (vendor: ${p.vendor})${takenByGenerator ? ': used by Generator' : ''}`);
+      })),
+      key === 'reviewer' && ui.settingsNotice ? h('div', { class: 'small', style: 'color:var(--warn)' }, ui.settingsNotice) : null,
       h('label', {}, 'Model'),
       h('div', { class: 'row' },
         h('select', { class: 'grow', disabled: !hasKey, onchange: (e) => {
@@ -451,8 +502,7 @@ function renderSettings() {
       h('div', { class: 'row' },
         h('div', { class: 'grow' }, h('label', {}, 'Max output tokens'), h('input', { type: 'number', min: '256', value: cfg.maxOutputTokens, oninput: (e) => { cfg.maxOutputTokens = parseInt(e.target.value, 10); } })),
         h('div', { class: 'grow' }, h('label', {}, 'Context window (tokens)'), h('input', { type: 'number', min: '1024', value: cfg.contextWindow, oninput: (e) => { cfg.contextWindow = parseInt(e.target.value, 10); } }))),
-      h('label', {}, h('input', { type: 'checkbox', checked: cfg.reasoning, onchange: (e) => { cfg.reasoning = e.target.checked; } }), ' Reasoning model: request reasoning/thinking stream (keeps slow responses alive; content never shown or stored)'),
-      h('label', {}, h('input', { type: 'checkbox', checked: cfg.imageInput, onchange: (e) => { cfg.imageInput = e.target.checked; } }), ' Model supports image input'),
+      capabilityInfo(cfg, current),
       pricingInputs(s, cfg));
   };
 
@@ -486,25 +536,57 @@ function renderSettings() {
     h('div', { class: 'row' }, h('span', { class: 'grow' }),
       h('button', { class: 'primary', onclick: () => act(async () => {
         ui.app.settings = await send('saveSettings', { patch: { generator: s.generator, reviewer: s.reviewer, iterationLimit: s.iterationLimit, defaultCapUsd: s.defaultCapUsd, pricing: s.pricing, timeouts: s.timeouts } });
-        ui.settingsDraft = null;
+        ui.settingsDraft = null; ui.settingsNotice = null;
       }) }, 'Save settings')),
   );
 }
 
+/**
+ * Price fields for the selected model. Built-in defaults fill in automatically (with their "as of"
+ * date); editing a field saves a custom price for that model, and "Use default" removes it.
+ */
 function pricingInputs(s, cfg) {
   if (!cfg.model) return null;
   const key = `${cfg.provider}:${cfg.model}`;
-  const p = (s.pricing[key] ||= { inputPerMTok: null, outputPerMTok: null });
-  const num = (field) => h('input', { type: 'number', min: '0', step: '0.01', value: p[field] ?? '', oninput: (e) => { p[field] = e.target.value === '' ? null : Number(e.target.value); } });
-  return h('div', { class: 'row' },
-    h('div', { class: 'grow' }, h('label', {}, `Input $ / 1M tokens (${cfg.model})`), num('inputPerMTok')),
-    h('div', { class: 'grow' }, h('label', {}, 'Output $ / 1M tokens'), num('outputPerMTok')));
+  const def = defaultPricing(cfg.provider, cfg.model);
+  const isCustom = hasPricing(s.pricing[key]);
+  const shown = isCustom ? s.pricing[key] : def;
+
+  const num = (field) => h('input', {
+    type: 'number', min: '0', step: '0.01', value: shown?.[field] ?? '',
+    placeholder: def ? '' : 'enter price',
+    oninput: (e) => {
+      // The first edit turns the default into a custom price for this model.
+      const base = hasPricing(s.pricing[key]) ? s.pricing[key]
+        : { inputPerMTok: def?.inputPerMTok ?? null, outputPerMTok: def?.outputPerMTok ?? null };
+      s.pricing[key] = { ...base, [field]: e.target.value === '' ? null : Number(e.target.value) };
+    },
+  });
+
+  let note;
+  if (isCustom) {
+    note = h('div', { class: 'row small' },
+      h('span', { class: 'grow', style: 'color:var(--warn)' }, 'Custom price (your value)'),
+      def ? h('button', { onclick: () => { s.pricing[key] = null; render(); } }, 'Use default') : null);
+  } else if (def) {
+    const extras = [];
+    if (def.longContext) extras.push(`prompts over ${def.longContext.aboveTokens.toLocaleString()} tokens: $${def.longContext.inputPerMTok} / $${def.longContext.outputPerMTok}`);
+    if (def.nextChange) extras.push(`changes to $${def.nextChange.input} / $${def.nextChange.output} on ${def.nextChange.from}`);
+    note = h('div', { class: 'small muted' }, `Default price as of ${def.asOf}${extras.length ? ` · ${extras.join(' · ')}` : ''}. Edit to override.`);
+  } else {
+    note = h('div', { class: 'small error' }, "No built-in price for this model. Enter it from the provider's pricing page, or runs will need the budget cap disabled.");
+  }
+  return h('div', {},
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('label', {}, `Input $ / 1M tokens (${cfg.model})`), num('inputPerMTok')),
+      h('div', { class: 'grow' }, h('label', {}, 'Output $ / 1M tokens'), num('outputPerMTok'))),
+    note);
 }
 
 // ------------------------------------------------------------------ boot
 for (const b of document.querySelectorAll('.tabs button')) {
   b.addEventListener('click', () => {
-    if (b.dataset.tab === 'settings' && ui.tab !== 'settings') ui.settingsDraft = null; // fresh form on entry
+    if (b.dataset.tab === 'settings' && ui.tab !== 'settings') { ui.settingsDraft = null; ui.settingsNotice = null; } // fresh form on entry
     ui.tab = b.dataset.tab;
     render();
   });

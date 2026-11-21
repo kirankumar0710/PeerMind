@@ -31,6 +31,52 @@ export function classifyGeminiModel(id, methods = []) {
   return supported;
 }
 
+// ---------------------------------------------------------------- capability detection
+// Provider model lists do not report these, so they are derived from the model ID and shown to the
+// user as information. Anything unrecognised is reported as not supported (§6.1).
+//   reasoning:  the model emits a reasoning/thinking stream PeerMind can request (FR-092)
+//   imageInput: the model accepts images in the prompt (§8.1)
+//   thinkingIsOptional: reasoning is a separate opt-in that changes cost and output (Claude extended thinking)
+
+export function openAiCapabilities(id) {
+  return {
+    reasoning: /^(o\d|gpt-[5-9])/.test(id),
+    imageInput: /^(gpt-4o|gpt-4\.1|gpt-4\.5|gpt-4-turbo|gpt-[5-9]|chatgpt-4o|o1(?!-mini)|o3(?!-mini)|o4)/.test(id),
+    thinkingIsOptional: false,
+  };
+}
+
+/**
+ * Claude IDs look like claude-3-7-sonnet-20250219, claude-sonnet-4-5, claude-opus-5-5, claude-fable-5-2.
+ * thinkingMode decides how the adapter requests thinking:
+ *   'budget'          3.7 – 4.5: {type:'enabled', budget_tokens} — optional (user opt-in)
+ *   'adaptive'        4.6 – 4.8: {type:'adaptive'} — optional (user opt-in); budget_tokens is rejected on 4.7+
+ *   'always'          5.x and later: thinking is on by default and cannot always be disabled, so it is
+ *                     always requested (with summarized display, so progress events keep the stream alive)
+ */
+export function anthropicCapabilities(id) {
+  const m = id.match(/^claude-(?:[a-z]+-)?(\d+)(?:-(\d)(?!\d))?/);
+  const major = m ? Number(m[1]) : 0;
+  const minor = m && m[2] ? Number(m[2]) : 0;
+  const v = major + minor / 10;
+  const thinkingMode = v >= 5 ? 'always' : v >= 4.6 ? 'adaptive' : v >= 3.7 ? 'budget' : null;
+  return {
+    reasoning: thinkingMode !== null,
+    imageInput: major >= 3,
+    thinkingIsOptional: thinkingMode === 'budget' || thinkingMode === 'adaptive',
+    thinkingMode,
+    version: v,
+  };
+}
+
+export function geminiCapabilities(id) {
+  return {
+    reasoning: /^gemini-(2\.5|[3-9])/.test(id),
+    imageInput: /^gemini-/.test(id),
+    thinkingIsOptional: false,
+  };
+}
+
 /** Supported models first, then alphabetical. */
 const sortModels = (list) => list.sort((a, b) => (b.supported - a.supported) || a.id.localeCompare(b.id));
 
@@ -40,7 +86,7 @@ const openai = {
   label: 'OpenAI',
   async listModels(apiKey) {
     const r = await jsonCall('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` }, apiKey });
-    return sortModels(r.data.map((m) => ({ id: m.id, ...classifyOpenAiModel(m.id) })));
+    return sortModels(r.data.map((m) => ({ id: m.id, ...classifyOpenAiModel(m.id), capabilities: openAiCapabilities(m.id) })));
   },
   buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
     const input = messages.map((m) => (m.role === 'assistant'
@@ -99,9 +145,15 @@ const anthropic = {
   label: 'Anthropic',
   async listModels(apiKey) {
     const r = await jsonCall('https://api.anthropic.com/v1/models?limit=1000', { headers: ANTHROPIC_HEADERS(apiKey), apiKey });
-    return sortModels(r.data.map((m) => ({ id: m.id, label: m.display_name, ...classifyAnthropicModel(m.id) })));
+    return sortModels(r.data.map((m) => ({
+      id: m.id, label: m.display_name, ...classifyAnthropicModel(m.id), capabilities: anthropicCapabilities(m.id),
+      // The Models API reports the context window and output cap (since Mar 2026).
+      ...(Number.isFinite(m.max_input_tokens) ? { contextWindow: m.max_input_tokens } : {}),
+      ...(Number.isFinite(m.max_tokens) ? { maxOutput: m.max_tokens } : {}),
+    })));
   },
   buildStreamRequest({ apiKey, model, system, messages, maxOutputTokens, reasoning }) {
+    const caps = anthropicCapabilities(model);
     const body = {
       model, system, stream: true, max_tokens: maxOutputTokens,
       messages: messages.map((m) => (m.role === 'assistant'
@@ -114,9 +166,19 @@ const anthropic = {
           ],
         })),
     };
-    // FR-092: request the thinking stream. Budget must be >= 1024 and below max_tokens.
-    if (reasoning && maxOutputTokens > 2048) {
-      body.thinking = { type: 'enabled', budget_tokens: Math.max(1024, Math.floor(maxOutputTokens / 2)) };
+    // FR-092: request the thinking stream in the form each Claude generation accepts.
+    // Thinking text is only a liveness signal here; it is never shown, stored or exported (FR-093).
+    if (reasoning) {
+      if (caps.thinkingMode === 'budget') {
+        // 3.7 – 4.5: budget must be >= 1024 and below max_tokens.
+        if (maxOutputTokens > 2048) body.thinking = { type: 'enabled', budget_tokens: Math.max(1024, Math.floor(maxOutputTokens / 2)) };
+      } else if (caps.thinkingMode === 'adaptive' && caps.version < 4.7) {
+        body.thinking = { type: 'adaptive' }; // 4.6 streams summarized thinking by default
+      } else if (caps.thinkingMode) {
+        // 4.7+ and 5.x default to display "omitted" (empty thinking text); ask for summaries so
+        // thinking produces stream events that keep the inactivity timers alive.
+        body.thinking = { type: 'adaptive', display: 'summarized' };
+      }
     }
     return { url: 'https://api.anthropic.com/v1/messages', headers: ANTHROPIC_HEADERS(apiKey), body };
   },
@@ -152,6 +214,7 @@ const gemini = {
       return {
         id, label: m.displayName, contextWindow: m.inputTokenLimit, maxOutput: m.outputTokenLimit,
         ...classifyGeminiModel(id, m.supportedGenerationMethods || []),
+        capabilities: { ...geminiCapabilities(id), ...(typeof m.thinking === 'boolean' ? { reasoning: m.thinking } : {}) },
       };
     }));
   },
