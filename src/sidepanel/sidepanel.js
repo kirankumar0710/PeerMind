@@ -5,6 +5,7 @@ import { buildExportZip } from '../export/export.js';
 import { summarizeUsage, hasPricing } from '../core/budget.js';
 import { defaultPricing } from '../providers/pricing.js';
 import { renderMarkdown } from './markdown.js';
+import { loadToolRegistry, toolsForModel } from '../providers/tools.js';
 import {
   RunState as S, CompletionReason as CR, DISCLOSURE_TEXT, DISCLOSURE_VERSION, ITERATION_LIMIT, ReviewStatus, OpState,
 } from '../core/constants.js';
@@ -347,6 +348,7 @@ function timelineCard(d) {
     h('summary', {}, h('span', { class: o.role === 'G' ? 'role-g' : 'role-r' }, opLabel(o)), ` · ${providerLabel(o.provider)} ${o.model} · ${time(o.startedAt)} · `,
       h('span', { class: `pill ${o.state === OpState.SUCCEEDED ? 'ok' : o.state === OpState.IN_PROGRESS ? 'info' : 'bad'}` }, o.state),
       o.state === OpState.IN_PROGRESS && ui.thinkingOp === o.id ? h('span', { class: 'thinking small' }, ' Thinking') : null),
+    o.toolsOffered ? h('div', { class: 'small muted' }, `Tools offered: ${o.toolsOffered.length ? o.toolsOffered.join(', ') : 'none'}`) : null,
     h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'}${o.usage?.webSearches ? ` · ${o.usage.webSearches} web search${o.usage.webSearches === 1 ? '' : 'es'}` : ''}${o.usage?.images ? ` · ${o.usage.images} image${o.usage.images === 1 ? '' : 's'} generated` : ''} · cost ${money(o.costUsd)}`),
     o.error ? h('div', { class: 'small error' }, o.error.message || (o.error.errors || []).join(' ')) : null,
     h('details', {}, h('summary', { class: 'small' }, 'Context sent'), h('pre', {}, JSON.stringify(o.contextSent, null, 2))),
@@ -416,10 +418,36 @@ function sourcesList(sources, title = 'Sources') {
  * starting value; for an existing one it updates the conversation and applies from the next run or
  * retry. Switches only allow a tool; the model decides when to use it.
  */
+function toolIsOn(d, tool) {
+  const stored = d ? d.conversation.tools?.[tool.id] ?? (tool.id === 'web_search' ? d.conversation.webSearch : undefined) : ui.newTools[tool.id];
+  return typeof stored === 'boolean' ? stored : tool.defaultEnabled;
+}
+
+/**
+ * Warn when a ticked tool cannot actually be offered: no selected model, in a role allowed to use it,
+ * supports it (e.g. image generation with a Claude Generator). Otherwise the tool would silently be
+ * left out and the model would answer without it.
+ */
+function toolWarnings(d) {
+  if (!ui.registry) return [];
+  const s = ui.app.settings;
+  const vendorOf = (id) => ui.app.providers.find((p) => p.id === id)?.vendor;
+  const roles = { G: s.generator, R: s.reviewer };
+  const names = { G: 'Generator', R: 'Reviewer' };
+  return (ui.app.tools || []).filter((t) => toolIsOn(d, t)).flatMap((tool) => {
+    const reg = ui.registry.tools[tool.id];
+    if (!reg) return [];
+    const usable = reg.roles.filter((r) => roles[r].model && toolsForModel(ui.registry, vendorOf(roles[r].provider), roles[r].model, r).some((x) => x.id === tool.id));
+    if (usable.length) return [];
+    const who = reg.roles.map((r) => `${names[r]}: ${providerLabel(roles[r].provider)} ${roles[r].model || '(no model)'}`).join('; ');
+    return [h('div', { class: 'small', style: 'color:var(--warn)' },
+      `⚠ ${tool.label} is ticked but not available for the selected model (${who}). It will not be offered. Choose a model that supports it in Settings.`)];
+  });
+}
+
 function toolToggles(d) {
   return (ui.app.tools || []).map((tool) => {
-    const stored = d ? d.conversation.tools?.[tool.id] ?? (tool.id === 'web_search' ? d.conversation.webSearch : undefined) : ui.newTools[tool.id];
-    const on = typeof stored === 'boolean' ? stored : tool.defaultEnabled;
+    const on = toolIsOn(d, tool);
     return h('label', { style: 'margin:0', title: tool.description },
       h('input', {
         type: 'checkbox', checked: on,
@@ -481,6 +509,7 @@ function promptCard() {
           ui.attachments = [];
         }),
       }, 'Start')),
+    ...toolWarnings(d),
     blocked ? h('div', { class: 'small muted' }, unfinished ? 'Finish or abandon the current run first.' : readOnly ? 'This conversation is read-only.' : 'Configure both providers, models and keys in Settings (different vendors).') : null,
     h('div', { class: 'small muted' }, 'Provider API usage is billed by each provider, separately from consumer subscriptions.'));
 }
@@ -801,4 +830,4 @@ for (const b of document.querySelectorAll('.tabs button')) {
 }
 const params = new URLSearchParams(location.search);
 if (params.get('conversation')) ui.convId = params.get('conversation');
-refresh();
+loadToolRegistry().then((r) => { ui.registry = r; }).catch((e) => { ui.error = e.message; }).finally(refresh);

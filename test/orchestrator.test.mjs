@@ -300,6 +300,8 @@ test('image generation: draw → Reviewer sees the image → refine edits it →
   assert.match(data.assets[0].sha256, /^[0-9a-f]{64}$/);
   const gOp = data.operations.find((o) => o.role === 'G');
   assert.equal(gOp.usage.images, 1);
+  assert.deepEqual(gOp.toolsOffered, ['image_generation']); // recorded for the timeline
+  assert.deepEqual(data.operations.find((o) => o.role === 'R').toolsOffered, []);
   assert.ok(Math.abs(gOp.costUsd - ((1000 * 1.25 + 500 * 10) / 1e6 + 0.06)) < 1e-9); // tokens + one image fee
 });
 

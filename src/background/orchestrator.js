@@ -662,6 +662,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
     state: OpState.IN_PROGRESS, createdAt: nowIso(), startedAt: nowIso(), endedAt: null,
     usage: null, costUsd: null, partial: '', error: null,
     // FR-071: the exact context sent, viewable afterwards. Images by asset ID only.
+    toolsOffered: tools.map((t) => t.id), // shown in the timeline: what this call could use
     contextSent: {
       system: req.system,
       messages: messages.map((m) => ({ role: m.role, text: m.text, imageAssetIds: (m.images || []).map((i) => i.asset_id) })),
