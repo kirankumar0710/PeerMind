@@ -9,7 +9,18 @@ A Generator model (G) from one vendor drafts an answer. A Reviewer model (R) fro
 
 ## Build the package
 
-There is no compile step, because the browser runs the source files as they are. Building means checking the code and zipping it into one package. That same package is installed on both Brave and Chrome (FR-104). Run these from the repo root.
+There is no compile step, because the browser runs the source files as they are. Building means checking the code and zipping it into one package. That same package is installed on both Brave and Chrome (FR-104).
+
+**Quick way.** One script runs every step below:
+
+```sh
+./create_package.sh                # install if needed, test, compat check, zip, unzip
+./create_package.sh --skip-checks  # zip and unzip only
+```
+
+It creates `dist/peermind-<version>.zip` and the unzipped `dist/peermind-<version>/`, and prints the SHA-256.
+
+**Step by step.** Run these from the repo root.
 
 1. **One-time setup.** This installs a test-only dependency; nothing from it goes into the package.
    ```sh
