@@ -25,6 +25,10 @@ const nextSeq = () => Date.now() * 1000 + (seqCounter++ % 1000);
 export const onChange = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 const emit = (evt) => { for (const fn of listeners) { try { fn(evt); } catch { /* listener errors never break runs */ } } };
 
+/** "Generator · OpenAI gpt-5.5" — prefix for errors so the user sees which side failed. */
+const roleSource = (role, cfg) =>
+  `${role === 'G' ? 'Generator' : 'Reviewer'} · ${ADAPTERS[cfg.provider]?.label || cfg.provider} ${cfg.model}`;
+
 const log = (run, entry) => { run.log = [...(run.log || []), { at: nowIso(), ...entry }].slice(-200); };
 
 // ------------------------------------------------------------------ transitions & locks
@@ -288,16 +292,22 @@ async function preflight(run) {
   // Authentication, connectivity, model usability with this key, and detected capabilities.
   const resolved = {};
   for (const [role, cfg] of [['generator', g], ['reviewer', r]]) {
-    const models = await ADAPTERS[cfg.provider].listModels(await getKey(cfg.provider));
+    const who = roleSource(role === 'generator' ? 'G' : 'R', cfg);
+    let models;
+    try {
+      models = await ADAPTERS[cfg.provider].listModels(await getKey(cfg.provider));
+    } catch (e) {
+      return { message: `${who}: ${e.message}`, action: 'SETTINGS' };
+    }
     const m = models.find((x) => x.id === cfg.model);
-    if (!m) return { message: `Model "${cfg.model}" is not available from ${ADAPTERS[cfg.provider].label} with this API key.`, action: 'SETTINGS' };
-    if (!m.supported) return { message: `Model "${cfg.model}" is not supported by PeerMind (${m.reason}).`, action: 'SETTINGS' };
+    if (!m) return { message: `${who}: model is not available with this API key.`, action: 'SETTINGS' };
+    if (!m.supported) return { message: `${who}: model is not supported by PeerMind (${m.reason}).`, action: 'SETTINGS' };
     if (m.maxOutput && cfg.maxOutputTokens > m.maxOutput) {
-      return { message: `Max output tokens for ${cfg.model} exceed the model maximum (${m.maxOutput}).`, action: 'SETTINGS' };
+      return { message: `${who}: max output tokens exceed the model maximum (${m.maxOutput}).`, action: 'SETTINGS' };
     }
     const caps = m.capabilities || { reasoning: false, imageInput: false, thinkingIsOptional: false };
     if (run.imageAssetIds.length && !caps.imageInput) {
-      return { message: `Images are attached, but ${cfg.model} does not accept image input. Choose a model that does, or remove the images.`, action: 'SETTINGS' };
+      return { message: `${who}: images are attached, but this model does not accept image input. Choose a model that does, or remove the images.`, action: 'SETTINGS' };
     }
     resolved[role] = {
       ...cfg,
@@ -551,7 +561,7 @@ async function updateOp(opId, patch) {
 async function providerCall(run, signal, { role, kind, cfg, pricing, req, messages, corrective }) {
   const opId = uid('op');
   const apiKey = await getKey(cfg.provider);
-  if (!apiKey) throw Object.assign(new Error(`API key for ${ADAPTERS[cfg.provider].label} is no longer available.`), { action: 'MISSING_KEYS' });
+  if (!apiKey) throw Object.assign(new Error(`${roleSource(role, cfg)}: API key is no longer available.`), { action: 'MISSING_KEYS' });
   await put('operations', {
     id: opId, conversationId: run.conversationId, runId: run.id, kind, role, corrective,
     purpose: corrective ? `${kind} (corrective retry)` : kind,
@@ -605,6 +615,8 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
     return { text: result.text, opId };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError('network', e.message);
+    // Say which role and model failed, ahead of the provider's raw message.
+    if (err.kind !== 'aborted') err.message = `${roleSource(role, cfg)}: ${err.message}`;
     console.warn(`${tag} failed after ${Date.now() - t0} ms: ${err.kind}: ${err.message}`);
     const usage = err.usage && (err.usage.inputTokens != null || err.usage.outputTokens != null) ? err.usage : null;
     await updateOp(opId, {

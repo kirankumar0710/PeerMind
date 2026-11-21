@@ -11,7 +11,7 @@ import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
   tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '',
-  error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
+  error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, saveStatus: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
 // ------------------------------------------------------------------ helpers
@@ -183,7 +183,12 @@ function reviewPill(run) {
 
 function renderRun() {
   const root = document.getElementById('tab-run');
-  const parts = [configSummary()];
+  // Keep typing undisturbed: remember focus and caret in the prompt box across re-renders.
+  const active = document.activeElement;
+  const caret = active?.id === 'prompt-input' ? [active.selectionStart, active.selectionEnd] : null;
+
+  // Order: configuration, then the prompt box, then the run and its results.
+  const parts = [configSummary(), promptCard()];
   const d = ui.data;
   if (d) {
     const run = d.runs.at(-1);
@@ -194,6 +199,7 @@ function renderRun() {
       parts.push(h('section', { class: 'card' },
         h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Latest output'),
           h('button', { onclick: () => navigator.clipboard.writeText(outMsg.text) }, 'Copy Final Output')),
+        h('div', { class: 'small muted', style: 'margin-bottom:6px' }, `For prompt: ${outRun.prompt || '(image only)'}`),
         h('div', { class: 'row', style: 'margin-bottom:6px' }, outRun.state === S.FINISHED || outRun.reviewStatus ? reviewPill(outRun)
           : h('span', { class: `pill ${outRun.latestOutputReviewed ? 'info' : 'warn'}` }, outRun.latestOutputReviewed ? 'reviewed, run in progress' : 'awaiting review')),
         h('div', { class: 'output' }, outMsg.text || '(empty response)'),
@@ -202,8 +208,12 @@ function renderRun() {
     }
     parts.push(findingsCard(d, run), iterationsCard(d), timelineCard(d));
   }
-  parts.push(promptCard());
   root.replaceChildren(...parts.filter(Boolean));
+  if (caret) {
+    const ta = document.getElementById('prompt-input');
+    ta?.focus();
+    ta?.setSelectionRange(caret[0], caret[1]);
+  }
 }
 
 function runStatusCard(run) {
@@ -344,7 +354,7 @@ function promptCard() {
   const notReady = !s.generator.model || !s.reviewer.model || sameVendor || !ui.app.keys[s.generator.provider] || !ui.app.keys[s.reviewer.provider];
   const blocked = unfinished || readOnly || notReady;
 
-  const ta = h('textarea', { placeholder: d ? 'Next prompt in this conversation…' : 'What should the two models work on?', oninput: (e) => { ui.promptDraft = e.target.value; } });
+  const ta = h('textarea', { id: 'prompt-input', placeholder: d ? 'Next prompt in this conversation…' : 'What should the two models work on?', oninput: (e) => { ui.promptDraft = e.target.value; } });
   ta.value = ui.promptDraft;
   const cap = d ? null : h('input', { type: 'number', min: '0', step: '0.5', value: String(s.defaultCapUsd), style: 'width:90px' });
   const file = h('input', {
@@ -358,8 +368,10 @@ function promptCard() {
     },
   });
   return h('section', { class: 'card' },
-    h('div', { class: 'row' }, h('h2', { class: 'grow' }, d ? d.conversation.title : 'New conversation'),
+    h('div', { class: 'row' }, h('h2', { class: 'grow' }, d ? 'Next prompt' : 'New prompt'),
       d ? h('button', { onclick: () => { ui.convId = null; ui.data = null; render(); } }, 'New conversation') : null),
+    // The conversation keeps the name of its first prompt; it labels the thread, not this prompt.
+    d ? h('div', { class: 'small muted', style: 'margin-bottom:6px' }, `In conversation: ${d.conversation.title}`) : null,
     ta,
     h('div', { class: 'thumbs' }, ui.attachments.map((a, i) => h('img', { src: a.url, title: 'Click to remove', onclick: () => { ui.attachments.splice(i, 1); render(); } }))),
     h('div', { class: 'row', style: 'margin-top:8px' },
@@ -586,12 +598,60 @@ function renderSettings() {
       ...providers.map((p) => h('div', { class: 'row small' }, h('span', { class: 'grow' }, p.label),
         s.disclosureAcks[p.vendor] === DISCLOSURE_VERSION ? h('span', { class: 'pill ok' }, 'acknowledged')
           : h('button', { onclick: () => act(async () => { ui.app.settings = await send('ackDisclosure', { provider: p.id }); }) }, 'Acknowledge')))),
-    h('div', { class: 'row' }, h('span', { class: 'grow' }),
-      h('button', { class: 'primary', onclick: () => act(async () => {
-        ui.app.settings = await send('saveSettings', { patch: { generator: s.generator, reviewer: s.reviewer, iterationLimit: s.iterationLimit, defaultCapUsd: s.defaultCapUsd, pricing: s.pricing, timeouts: s.timeouts } });
-        ui.settingsDraft = null; ui.settingsNotice = null;
-      }) }, 'Save settings')),
+    saveBar(s),
   );
+}
+
+/** Problems that would make the saved settings unusable; shown next to the Save button. */
+function validateDraft(s) {
+  const problems = [];
+  const { min, max } = ITERATION_LIMIT;
+  if (!Number.isInteger(s.iterationLimit) || s.iterationLimit < min || s.iterationLimit > max) problems.push(`Iteration limit must be a whole number from ${min} to ${max}.`);
+  if (!Number.isFinite(s.defaultCapUsd) || s.defaultCapUsd < 0) problems.push('Default cap must be 0 or more.');
+  for (const [name, cfg] of [['Generator', s.generator], ['Reviewer', s.reviewer]]) {
+    if (!Number.isInteger(cfg.maxOutputTokens) || cfg.maxOutputTokens < 256) problems.push(`${name}: max output tokens must be a whole number of at least 256.`);
+    if (!Number.isInteger(cfg.contextWindow) || cfg.contextWindow <= cfg.maxOutputTokens) problems.push(`${name}: context window must be larger than max output tokens.`);
+  }
+  for (const [k, v] of Object.entries(s.timeouts)) if (!Number.isFinite(v) || v <= 0) problems.push(`Timeout "${k}" must be more than 0 seconds.`);
+  for (const [k, p] of Object.entries(s.pricing)) {
+    if (p && [p.inputPerMTok, p.outputPerMTok].some((v) => v != null && (!Number.isFinite(v) || v < 0))) problems.push(`Price for ${k.split(':')[1]} must be 0 or more.`);
+  }
+  return problems;
+}
+
+async function saveDraft(s) {
+  const problems = validateDraft(s);
+  if (problems.length) {
+    ui.saveStatus = { state: 'error', message: problems.join(' ') };
+    render();
+    return;
+  }
+  ui.saveStatus = { state: 'saving' };
+  render();
+  try {
+    ui.app.settings = await send('saveSettings', { patch: { generator: s.generator, reviewer: s.reviewer, iterationLimit: s.iterationLimit, defaultCapUsd: s.defaultCapUsd, pricing: s.pricing, timeouts: s.timeouts } });
+    ui.settingsDraft = null;
+    ui.settingsNotice = null;
+    ui.saveStatus = { state: 'saved' };
+    setTimeout(() => {
+      if (ui.saveStatus?.state === 'saved') { ui.saveStatus = null; if (ui.tab === 'settings') render(); }
+    }, 3000);
+  } catch (e) {
+    ui.saveStatus = { state: 'error', message: `Could not save: ${e.message}` };
+  }
+  await refresh();
+}
+
+/** Save button pinned to the bottom of the panel, with its result shown right next to it. */
+function saveBar(s) {
+  const st = ui.saveStatus;
+  const status = !st ? null
+    : st.state === 'saving' ? h('span', { class: 'small muted' }, 'Saving…')
+    : st.state === 'saved' ? h('span', { class: 'small', style: 'color:var(--ok)' }, '✓ Settings saved')
+    : h('span', { class: 'small error' }, st.message);
+  return h('div', { class: 'row save-bar' },
+    h('span', { class: 'grow' }, status),
+    h('button', { class: 'primary', disabled: st?.state === 'saving', onclick: () => saveDraft(s) }, st?.state === 'saving' ? 'Saving…' : 'Save settings'));
 }
 
 /**
@@ -639,7 +699,7 @@ function pricingInputs(s, cfg) {
 // ------------------------------------------------------------------ boot
 for (const b of document.querySelectorAll('.tabs button')) {
   b.addEventListener('click', () => {
-    if (b.dataset.tab === 'settings' && ui.tab !== 'settings') { ui.settingsDraft = null; ui.settingsNotice = null; } // fresh form on entry
+    if (b.dataset.tab === 'settings' && ui.tab !== 'settings') { ui.settingsDraft = null; ui.settingsNotice = null; ui.saveStatus = null; } // fresh form on entry
     ui.tab = b.dataset.tab;
     render();
   });

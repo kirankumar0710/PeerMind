@@ -30,6 +30,7 @@ globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
   calls[vendor] += 1;
   const next = queues[vendor].shift();
   if (!next) throw new Error(`No scripted reply for ${vendor}`);
+  if (next.streamError) return sse([`data: ${next.streamError}\n\n`]); // provider error mid-stream
   const text = typeof next === 'string' ? next : JSON.stringify(next);
   if (vendor === 'openai') {
     return sse([
@@ -165,7 +166,7 @@ test('pre-flight blocks a listed but unsupported model, and a model the key cann
   await configure({ generator: { provider: 'openai', model: 'gpt-not-on-this-key', maxOutputTokens: 1000, contextWindow: 100000 } });
   ({ runId } = await orch.submitPrompt({ prompt: 'p', capUsd: 5 }));
   run = await settle(runId);
-  assert.match(run.failure.message, /not available .* with this API key/);
+  assert.equal(run.failure.message, 'Generator · OpenAI gpt-not-on-this-key: model is not available with this API key.');
   await orch.abandon(runId);
 });
 
@@ -194,6 +195,17 @@ test('built-in default prices let a run start with no pricing entered, and costs
   assert.deepEqual(JSON.parse(lastBody).thinking, { type: 'enabled', budget_tokens: 2000 });
   const data = await loadConversation(conversationId);
   assert.ok(data.operations.every((o) => o.costUsd > 0));
+});
+
+test('a provider error is shown raw, prefixed with the role and model that failed', async () => {
+  await configure();
+  const raw = '{"type":"error","sequence_number":2,"error":{"message":"You have no credits remaining.","type":"insufficient_quota","code":"credit_balance_exhausted"}}';
+  queues.openai.push({ streamError: raw });
+  const { runId } = await orch.submitPrompt({ prompt: 'p', capUsd: 5 });
+  const run = await settle(runId);
+  assert.equal(run.state, S.FAILED);
+  assert.equal(run.failure.message, `Generator · OpenAI gpt-test: ${raw}`);
+  await orch.abandon(runId);
 });
 
 test('missing pricing fails pre-flight with PRICING action; proceeding unenforced works (FR-081)', async () => {
