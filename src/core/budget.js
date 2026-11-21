@@ -10,17 +10,22 @@ export function hasPricing(pricing) {
  * Returns USD or null ("Not available") when pricing or token counts are missing.
  * When the prompt exceeds pricing.longContext.aboveTokens, the long-context rates apply to the whole call.
  */
-export function costUsd(pricing, inputTokens, outputTokens, webSearches = 0) {
+export function costUsd(pricing, inputTokens, outputTokens, toolCalls = {}) {
   if (!hasPricing(pricing) || !Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return null;
   const lc = pricing.longContext;
   const rates = lc && inputTokens > lc.aboveTokens && hasPricing(lc) ? lc : pricing;
-  const searchCost = (webSearches || 0) * (pricing.perSearchUsd || 0);
-  return (inputTokens * rates.inputPerMTok + outputTokens * rates.outputPerMTok) / 1e6 + searchCost;
+  // Built-in tool fees: toolCalls { web_search: n, image_generation: n } × pricing.toolFees (from tools.json).
+  let toolCost = 0;
+  for (const [id, n] of Object.entries(toolCalls || {})) toolCost += (n || 0) * (pricing.toolFees?.[id] || 0);
+  return (inputTokens * rates.inputPerMTok + outputTokens * rates.outputPerMTok) / 1e6 + toolCost;
 }
 
-/** A user-entered token price wins; otherwise the built-in default; otherwise null. Search fees come from the default. */
+/** Map an operation's usage counters to tool calls for costUsd. */
+export const toolCallsOf = (usage) => ({ web_search: usage?.webSearches || 0, image_generation: usage?.images || 0 });
+
+/** A user-entered token price wins; otherwise the built-in default; otherwise null. Tool fees are added from tools.json. */
 export function effectivePricing(override, fallback) {
-  if (hasPricing(override)) return { ...override, perSearchUsd: fallback?.perSearchUsd ?? override.perSearchUsd ?? 0, source: 'custom' };
+  if (hasPricing(override)) return { ...override, source: 'custom' };
   return fallback || null;
 }
 
@@ -34,7 +39,7 @@ export function checkReserve({ capUsd, spentUsd, enforced, items }) {
   if (!enforced) return { ok: true };
   let required = 0;
   for (const it of items) {
-    const c = costUsd(it.pricing, it.inputTokens, it.outputTokens, it.webSearches || 0);
+    const c = costUsd(it.pricing, it.inputTokens, it.outputTokens, it.toolCalls || {});
     if (c === null) return { ok: false, reason: 'MISSING_PRICING' };
     required += c;
   }

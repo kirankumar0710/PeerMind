@@ -82,8 +82,9 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
   }
 
   const state = {
-    text: '', usage: { inputTokens: null, outputTokens: null, webSearches: 0 }, finish: null, gotContent: false, headers: false,
+    text: '', usage: { inputTokens: null, outputTokens: null, webSearches: 0, images: 0 }, finish: null, gotContent: false, headers: false,
     sources: new Map(), // url -> { url, title, cited }
+    images: new Map(), // provider item id -> base64 (the same image can be reported twice)
   };
   const live = (kind) => {
     arm(state.gotContent ? t.inactivityMs : t.firstContentMs, state.gotContent ? 'no stream activity' : 'waiting for first content');
@@ -156,6 +157,10 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
             // Text before a tool result was preamble ("Let me search…"); the answer comes after it.
             state.text = '';
             live('search');
+          } else if (out.type === 'image') {
+            if (out.base64 && !state.images.has(out.id ?? state.images.size)) state.images.set(out.id ?? state.images.size, out.base64);
+            state.usage.images = state.images.size;
+            live('image');
           } else if (out.type === 'source') {
             const prev = state.sources.get(out.url);
             state.sources.set(out.url, { url: out.url, title: out.title || prev?.title || out.url, cited: !!(out.cited || prev?.cited) });
@@ -173,7 +178,7 @@ export async function streamCall(adapter, req, { apiKey, timeouts = DEFAULT_TIME
       }
     }
     clearTimeout(timer);
-    return { text: state.text, usage: state.usage, finish: state.finish, sources: pickSources(state.sources) };
+    return { text: state.text, usage: state.usage, finish: state.finish, sources: pickSources(state.sources), images: [...state.images.values()] };
   } catch (e) {
     throw fail(e);
   } finally {

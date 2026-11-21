@@ -8,7 +8,8 @@ import { assertTransition, holdsGlobalLock, isTerminal, stopOutcome, TransitionE
 import { parseStrictJson, validateInitialG, validateRefinement } from '../core/protocol.js';
 import { applyReviewReport } from '../core/findings.js';
 import { buildRequest, correctiveMessage } from '../core/context.js';
-import { checkReserve, costUsd, hasPricing, effectivePricing } from '../core/budget.js';
+import { checkReserve, costUsd, hasPricing, effectivePricing, toolCallsOf } from '../core/budget.js';
+import { sniffImageType, MAX_ASSET_BYTES } from '../core/images.js';
 import { defaultPricing } from '../providers/pricing.js';
 import { loadToolRegistry, toolsForModel, toolEnabled, jsonModeWithTools } from '../providers/tools.js';
 import { uid, nowIso, formatAssetId, sha256Hex, base64ToBytes, bytesToBase64, MEDIA_EXT } from '../core/util.js';
@@ -326,16 +327,15 @@ async function preflight(run) {
       // extended thinking is chosen, because that changes cost and output.
       reasoning: caps.reasoning && (!caps.thinkingIsOptional || cfg.extendedThinking === true),
       imageInput: caps.imageInput,
-      ...resolveTools(registry, cfg, conv),
+      ...resolveTools(registry, cfg, conv, role === 'generator' ? 'G' : 'R'),
     };
   }
 
   // A custom price entered in Settings wins; otherwise the built-in default for that model.
   // Web search fees are per provider and always come from the built-in table.
-  // Web search fees come from tools.json (per vendor variant).
-  const withSearchFee = (p, cfg) => (p ? { ...p, perSearchUsd: cfg.tools.find((t) => t.id === 'web_search')?.pricePerCall ?? 0 } : p);
-  const pricingG = withSearchFee(effectivePricing(settings.pricing[pricingKey(g.provider, g.model)], defaultPricing(g.provider, g.model)), resolved.generator);
-  const pricingR = withSearchFee(effectivePricing(settings.pricing[pricingKey(r.provider, r.model)], defaultPricing(r.provider, r.model)), resolved.reviewer);
+  // Built-in tool fees come from tools.json (per vendor variant).
+  const pricingG = withToolFees(effectivePricing(settings.pricing[pricingKey(g.provider, g.model)], defaultPricing(g.provider, g.model)), resolved.generator);
+  const pricingR = withToolFees(effectivePricing(settings.pricing[pricingKey(r.provider, r.model)], defaultPricing(r.provider, r.model)), resolved.reviewer);
   if (conv.budgetEnforced && (!hasPricing(pricingG) || !hasPricing(pricingR))) {
     return { message: 'Pricing is missing for a selected model.', action: 'PRICING' };
   }
@@ -397,10 +397,16 @@ async function loadState(run) {
       images.push({ asset_id: id, media_type: a.media_type, base64: bytesToBase64(a.bytes) });
     }
     const byId = new Map(messages.map((m) => [m.id, m]));
+    // Images in the latest Generator output: the Reviewer reviews them; a refinement edits them.
+    const outputImages = [];
+    for (const d of byId.get(run.latestOutputMessageId)?.assets || []) {
+      const a = await s.assets.get(findingKey(run.conversationId, d.asset_id));
+      if (a) outputImages.push({ asset_id: d.asset_id, media_type: a.media_type, base64: bytesToBase64(a.bytes) });
+    }
     const history = runs
       .filter((r) => r.id !== run.id && r.latestOutputMessageId)
       .map((r) => ({ prompt: r.prompt, output: byId.get(r.latestOutputMessageId)?.text ?? null }));
-    return { conv, messages, byId, findings, images, history };
+    return { conv, messages, byId, findings, images, outputImages, history };
   });
 }
 
@@ -409,24 +415,26 @@ const spentUsd = async (conversationId) => {
   return ops.reduce((sum, o) => sum + (o.costUsd || 0), 0);
 };
 
-/** Searches to reserve budget for when web search is on (Claude's max_uses; an estimate for others). */
-const EXPECTED_SEARCHES = 5;
-const expectedSearches = (cfg) => {
-  const ws = cfg.tools?.find((t) => t.id === 'web_search');
-  return ws ? (ws.request.max_uses ?? EXPECTED_SEARCHES) : 0;
-};
+/** Tool calls to reserve budget for: the request's max_uses if set, else the tool's expectedCallsPerRequest. */
+const expectedToolCalls = (cfg) =>
+  Object.fromEntries((cfg.tools || []).map((t) => [t.id, t.request.max_uses ?? t.expectedCallsPerRequest ?? 1]));
+
+/** Tool fees per call for a role, from tools.json, attached to its pricing. */
+const withToolFees = (pricing, cfg) =>
+  (pricing ? { ...pricing, toolFees: Object.fromEntries((cfg.tools || []).map((t) => [t.id, t.pricePerCall])) } : pricing);
 
 /**
  * Tools for one role, from tools.json: supported by this model AND switched on for the conversation.
  * Stored in the run config, so a retry uses the same tool set until pre-flight runs again.
  */
-function resolveTools(registry, cfg, conv) {
+function resolveTools(registry, cfg, conv, role) {
   const vendor = vendorOf(cfg.provider);
-  const tools = toolsForModel(registry, vendor, cfg.model).filter((t) => toolEnabled(conv, t));
+  const tools = toolsForModel(registry, vendor, cfg.model, role).filter((t) => toolEnabled(conv, t));
   return {
     tools,
     webSearch: tools.some((t) => t.id === 'web_search'),
     jsonMode: !tools.length || jsonModeWithTools(registry, vendor),
+    toolInstructions: tools.map((t) => t.instructions?.[role]).filter(Boolean),
   };
 }
 
@@ -447,16 +455,17 @@ async function stepGenerate(run, signal, refine) {
     kind: refine ? OpKind.G_REFINE : OpKind.G_INITIAL,
     prompt: run.prompt, images: st.images, confirmedDecisions: [],
     latestOutput: refine ? st.byId.get(run.latestOutputMessageId)?.text : undefined,
+    outputImages: refine ? st.outputImages : [],
     refineFindings, history: st.history,
-    windowTokens: g.contextWindow, maxOutputTokens: g.maxOutputTokens, webSearch: g.webSearch,
+    windowTokens: g.contextWindow, maxOutputTokens: g.maxOutputTokens, toolInstructions: g.toolInstructions,
   });
   if (req.overflow) return { finish: CR.CONTEXT_LIMIT_EXCEEDED };
 
   // §9.3 reserve: this G operation + required background ops (none in this build) + the following R review.
   const reviewInputEstimate = req.inputTokens + g.maxOutputTokens + 2000;
   const reserve = await budgetOk(run, st.conv, [
-    { pricing: rolePricing(run, 'G'), inputTokens: req.inputTokens, outputTokens: g.maxOutputTokens, webSearches: expectedSearches(g) },
-    { pricing: rolePricing(run, 'R'), inputTokens: reviewInputEstimate, outputTokens: r.maxOutputTokens, webSearches: expectedSearches(r) },
+    { pricing: rolePricing(run, 'G'), inputTokens: req.inputTokens, outputTokens: g.maxOutputTokens, toolCalls: expectedToolCalls(g) },
+    { pricing: rolePricing(run, 'R'), inputTokens: reviewInputEstimate, outputTokens: r.maxOutputTokens, toolCalls: expectedToolCalls(r) },
   ]);
   if (!reserve.ok) return reserve.reason === 'MISSING_PRICING' ? { fail: { message: 'Pricing is missing.', action: 'PRICING' } } : { finish: CR.BUDGET_REACHED };
 
@@ -469,10 +478,25 @@ async function stepGenerate(run, signal, refine) {
   if (res.finish || res.fail) return res;
 
   const obj = res.value;
-  await tx(['runs', 'messages'], 'readwrite', async (s) => {
+  // Generated images become PeerMind assets (§8.2): PeerMind assigns the ID; a refinement of an
+  // answer that had an image is recorded as an EDITED version linked to the previous one.
+  const previous = refine ? (st.byId.get(run.latestOutputMessageId)?.assets || [])[0]?.asset_id ?? null : null;
+  await tx(['runs', 'messages', 'conversations', 'assets'], 'readwrite', async (s) => {
+    const conv = await s.conversations.get(run.conversationId);
+    const assets = [];
+    for (const img of res.images || []) {
+      const asset_id = formatAssetId(conv.nextAssetNumber++);
+      const descriptor = {
+        asset_id, media_type: img.media_type, operation: previous ? 'EDITED' : 'GENERATED',
+        source_asset_id: previous, sha256: img.sha256, byte_length: img.byte_length,
+      };
+      await s.assets.put({ key: findingKey(run.conversationId, asset_id), conversationId: run.conversationId, ...descriptor, bytes: img.bytes });
+      assets.push(descriptor);
+    }
+    if (assets.length) await s.conversations.put(conv);
     const msg = {
       id: uid('msg'), conversationId: run.conversationId, runId: run.id, seq: nextSeq(), kind: 'g_output',
-      text: obj.response, summary: obj.summary, decisions: refine ? obj.decisions : [], assets: [], sources: res.sources || [],
+      text: obj.response, summary: obj.summary, decisions: refine ? obj.decisions : [], assets, sources: res.sources || [],
       refinementNo: refine ? run.cursor.refinementsDone + 1 : 0, opId: res.opId, createdAt: nowIso(),
     };
     await s.messages.put(msg);
@@ -504,12 +528,17 @@ async function stepReview(run, signal) {
     currentOpen: all.filter((f) => currentOpenIds.has(f.id)),
     resolved: all.filter((f) => f.status === FS.RESOLVED),
     earlierUnresolved: all.filter((f) => !currentOpenIds.has(f.id) && f.status !== FS.RESOLVED),
+    outputImages: st.outputImages,
     history: st.history,
-    windowTokens: r.contextWindow, maxOutputTokens: r.maxOutputTokens, webSearch: r.webSearch,
+    windowTokens: r.contextWindow, maxOutputTokens: r.maxOutputTokens, toolInstructions: r.toolInstructions,
   });
   if (req.overflow) return { finish: CR.CONTEXT_LIMIT_EXCEEDED };
+  // The Reviewer must see generated images as images (§8.1), never just a description.
+  if (st.outputImages.length && !r.imageInput) {
+    return { fail: { message: `${roleSource('R', r)}: the answer contains generated image(s), but this model cannot read images. Choose a Reviewer model with image input, then Retry.`, action: 'SETTINGS' } };
+  }
 
-  const affordable = await budgetOk(run, st.conv, [{ pricing: rolePricing(run, 'R'), inputTokens: req.inputTokens, outputTokens: r.maxOutputTokens, webSearches: expectedSearches(r) }]);
+  const affordable = await budgetOk(run, st.conv, [{ pricing: rolePricing(run, 'R'), inputTokens: req.inputTokens, outputTokens: r.maxOutputTokens, toolCalls: expectedToolCalls(r) }]);
   if (!affordable.ok) return affordable.reason === 'MISSING_PRICING' ? { fail: { message: 'Pricing is missing.', action: 'PRICING' } } : { finish: CR.BUDGET_REACHED };
 
   let applied = null;
@@ -564,26 +593,54 @@ async function callWithCorrective(run, conv, signal, { role, kind, req, validate
   const pricing = rolePricing(run, role);
   const userMsg = { role: 'user', text: req.text, images: req.images };
   let messages = [userMsg];
+  let keptImages = []; // images from an attempt whose JSON was invalid are kept, never re-generated
+  let tools = cfg.tools || [];
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (attempt === 2) {
-      const ok = await budgetOk(run, conv, [{ pricing, inputTokens: req.inputTokens * 2, outputTokens: cfg.maxOutputTokens, webSearches: expectedSearches(cfg) }]);
+      const calls = Object.fromEntries(tools.map((t) => [t.id, t.request.max_uses ?? t.expectedCallsPerRequest ?? 1]));
+      const ok = await budgetOk(run, conv, [{ pricing, inputTokens: req.inputTokens * 2, outputTokens: cfg.maxOutputTokens, toolCalls: calls }]);
       if (!ok.ok) return { finish: CR.BUDGET_REACHED };
     }
-    const { text, opId, sources } = await providerCall(run, signal, { role, kind, cfg, pricing, req, messages, corrective: attempt === 2 });
+    const out = await providerCall(run, signal, { role, kind, cfg, pricing, req, messages, tools, corrective: attempt === 2 });
+    const { text, opId, sources } = out;
+    if (out.images.length) keptImages = out.images;
     const parsed = parseStrictJson(text);
     const errors = parsed.errors.length ? parsed.errors : validate(parsed.value);
     if (!errors.length) {
       await updateOp(opId, { state: OpState.SUCCEEDED, validation: 'VALID' });
-      return { value: parsed.value, opId, sources };
+      return { value: parsed.value, opId, sources, images: keptImages };
     }
     await updateOp(opId, { state: OpState.FAILED, validation: 'INVALID', error: { kind: 'protocol', errors } });
     if (attempt === 2) {
       return { fail: { message: `${role === 'G' ? 'Generator' : 'Reviewer'} returned an invalid response twice: ${errors.slice(0, 3).join(' ')}` } };
     }
-    messages = [userMsg, { role: 'assistant', text }, { role: 'user', text: correctiveMessage(errors) }];
+    let fix = correctiveMessage(errors);
+    if (keptImages.length) {
+      // The image is already made and stored; the retry only fixes the JSON, without image tools.
+      tools = tools.filter((t) => t.result !== 'image');
+      fix += ' The image you generated has been kept; do not generate another one. Send only the JSON object.';
+    }
+    messages = [userMsg, { role: 'assistant', text: text || '(no text)' }, { role: 'user', text: fix }];
   }
   return { fail: { message: 'Unreachable' } };
+}
+
+/**
+ * Turn provider base64 images into checked asset data. The file signature decides the media type
+ * (never the provider's claim); anything that is not PNG/JPEG/WebP/GIF, or is too large, is rejected.
+ */
+async function decodeImages(list = []) {
+  const out = [];
+  for (const b64 of list) {
+    let bytes;
+    try { bytes = base64ToBytes(b64); } catch { throw new ProviderError('provider', 'Generated image is not valid base64.'); }
+    const media_type = sniffImageType(bytes);
+    if (!media_type) throw new ProviderError('provider', 'Generated file is not a supported image (PNG, JPEG, WebP or GIF).');
+    if (bytes.byteLength > MAX_ASSET_BYTES) throw new ProviderError('provider', `Generated image is larger than ${MAX_ASSET_BYTES / 1024 / 1024} MiB.`);
+    out.push({ media_type, bytes, sha256: await sha256Hex(bytes), byte_length: bytes.byteLength });
+  }
+  return out;
 }
 
 async function updateOp(opId, patch) {
@@ -594,7 +651,7 @@ async function updateOp(opId, patch) {
 }
 
 /** Persist the operation before and after the call (§5.6), stream with timeouts, record usage. */
-async function providerCall(run, signal, { role, kind, cfg, pricing, req, messages, corrective }) {
+async function providerCall(run, signal, { role, kind, cfg, pricing, req, messages, tools = cfg.tools || [], corrective }) {
   const opId = uid('op');
   const apiKey = await getKey(cfg.provider);
   if (!apiKey) throw Object.assign(new Error(`${roleSource(role, cfg)}: API key is no longer available.`), { action: 'MISSING_KEYS' });
@@ -616,7 +673,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
   // Diagnostics in the service-worker console: operation, provider and timing only — never keys or content.
   const t0 = Date.now();
   const tag = `[PeerMind] ${kind}${corrective ? ' (corrective)' : ''} ${cfg.provider}/${cfg.model}`;
-  console.info(`${tag} started (reasoning stream ${cfg.reasoning ? 'requested' : 'off'}, tools: ${(cfg.tools || []).map((t) => t.id).join(', ') || 'none'})`);
+  console.info(`${tag} started (reasoning stream ${cfg.reasoning ? 'requested' : 'off'}, tools: ${tools.map((t) => t.id).join(', ') || 'none'})`);
   let lastSave = Date.now();
   let partial = '';
   const adapter = ADAPTERS[cfg.provider];
@@ -634,7 +691,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
   try {
     const result = await streamCall(wrapped, {
       model: cfg.model, system: req.system, messages, maxOutputTokens: cfg.maxOutputTokens, reasoning: cfg.reasoning,
-      tools: (cfg.tools || []).map((t) => t.request), jsonMode: cfg.jsonMode !== false,
+      tools: tools.map((t) => t.request), jsonMode: tools.length ? cfg.jsonMode !== false : true,
     }, {
       apiKey, timeouts: run.config.timeouts, signal,
       onActivity: (k) => {
@@ -645,14 +702,18 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
         }
       },
     });
-    const usage = { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, webSearches: result.usage.webSearches || 0 };
+    const usage = {
+      inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens,
+      webSearches: result.usage.webSearches || 0, images: result.usage.images || 0,
+    };
+    const images = await decodeImages(result.images); // validated bytes + SHA-256, before anything is stored
     await tx(['operations'], 'readwrite', async (s) => {
       const op = await s.operations.get(opId);
       // State stays IN_PROGRESS until validation decides SUCCEEDED/FAILED; the result is durably recorded now.
-      await s.operations.put({ ...op, partial: result.text, rawResult: result.text, finish: result.finish, usage, sources: result.sources, costUsd: costUsd(pricing, usage.inputTokens, usage.outputTokens, usage.webSearches), endedAt: nowIso() });
+      await s.operations.put({ ...op, partial: result.text, rawResult: result.text, finish: result.finish, usage, sources: result.sources, costUsd: costUsd(pricing, usage.inputTokens, usage.outputTokens, toolCallsOf(usage)), endedAt: nowIso() });
     });
-    console.info(`${tag} finished in ${Date.now() - t0} ms (${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out, ${usage.webSearches} searches, finish: ${result.finish})`);
-    return { text: result.text, opId, sources: result.sources };
+    console.info(`${tag} finished in ${Date.now() - t0} ms (${usage.inputTokens ?? '?'} in / ${usage.outputTokens ?? '?'} out, ${usage.webSearches} searches, ${usage.images} images, finish: ${result.finish})`);
+    return { text: result.text, opId, sources: result.sources, images };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError('network', e.message);
     // Say which role and model failed, ahead of the provider's raw message.
@@ -662,7 +723,7 @@ async function providerCall(run, signal, { role, kind, cfg, pricing, req, messag
     await updateOp(opId, {
       state: OpState.FAILED, partial: err.partial || partial,
       error: { kind: err.kind, message: err.message, status: err.status },
-      usage, costUsd: usage ? costUsd(pricing, usage.inputTokens ?? 0, usage.outputTokens ?? 0, usage.webSearches ?? 0) : null,
+      usage, costUsd: usage ? costUsd(pricing, usage.inputTokens ?? 0, usage.outputTokens ?? 0, toolCallsOf(usage)) : null,
     });
     throw err;
   }

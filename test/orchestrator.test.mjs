@@ -34,10 +34,16 @@ globalThis.fetch = async (url, { method = 'GET', body } = {}) => {
   if (!next) throw new Error(`No scripted reply for ${vendor}`);
   if (next.streamError) return sse([`data: ${next.streamError}\n\n`]); // provider error mid-stream
   // { searchedReply, sourceUrl }: a reply preceded by one web search and followed by a citation
+  // { image, imageReply }: a generated image (base64) followed by imageReply (object, or raw text)
   const searched = next.searchedReply;
-  const text = JSON.stringify(searched || next);
+  const text = next.image ? (typeof next.imageReply === 'string' ? next.imageReply : JSON.stringify(next.imageReply)) : JSON.stringify(searched || next);
   if (vendor === 'openai') {
+    const imageItem = next.image ? { id: `ig_${calls.openai}`, type: 'image_generation_call', status: 'completed', result: next.image } : null;
     return sse([
+      ...(imageItem ? [
+        `data: ${JSON.stringify({ type: 'response.image_generation_call.in_progress' })}\n\n`,
+        `data: ${JSON.stringify({ type: 'response.output_item.done', item: imageItem })}\n\n`,
+      ] : []),
       ...(searched ? [
         `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'Let me look that up.' })}\n\n`,
         `data: ${JSON.stringify({ type: 'response.web_search_call.completed' })}\n\n`,
@@ -252,6 +258,77 @@ test('web search: sent to both roles when allowed; preamble dropped, sources and
   await settle(second.runId);
   assert.equal(bodies.openai[1].tools, undefined);
   assert.equal(bodies.anthropic[1].tools, undefined);
+});
+
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 9, 9]).toString('base64');
+const PNG2 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7, 7]).toString('base64');
+const imageSetup = (reviewerModel = 'claude-sonnet-4-5') => configure({
+  pricing: { 'anthropic:claude-test': { inputPerMTok: 1, outputPerMTok: 2 } }, iterationLimit: 1,
+  generator: { provider: 'openai', model: 'gpt-5.1', maxOutputTokens: 1000, contextWindow: 100000 },
+  reviewer: { provider: 'anthropic', model: reviewerModel, maxOutputTokens: 4000, contextWindow: 100000 },
+});
+
+test('image generation: draw → Reviewer sees the image → refine edits it → closing review', async () => {
+  await imageSetup();
+  bodies.openai.length = 0;
+  bodies.anthropic.length = 0;
+  const style = { provider_finding_ref: 's1', status: 'OPEN', severity: 'MEDIUM', category: 'REQUIREMENT_GAP', description: 'Not cartoon style.', suggestion: 'Use flat cartoon shading.', material: true };
+  queues.openai.push(
+    { image: PNG, imageReply: { protocol_version: '1.0', summary: 'cat', response: 'A cat sitting.' } },
+    { image: PNG2, imageReply: { protocol_version: '1.0', summary: 'cartoon', response: 'A cartoon cat.', decisions: [{ finding_id: 'PM-F-00001', decision: 'APPLIED', reason: 'Redrew in cartoon style.' }] } },
+  );
+  queues.anthropic.push(R([style]), R([{ existing_finding_id: 'PM-F-00001', status: 'RESOLVED' }], 'NO_MATERIAL_ISSUES'));
+
+  const { runId, conversationId } = await orch.submitPrompt({ prompt: 'generate cartoon type cat image', capUsd: 5, tools: { image_generation: true, web_search: false } });
+  const run = await settle(runId);
+  assert.equal(run.completionReason, CR.NO_MATERIAL_ISSUES);
+
+  // Generator was offered only the image tool (web search switched off); Reviewer got no image tool.
+  assert.deepEqual(bodies.openai[0].tools, [{ type: 'image_generation', size: '1024x1024', quality: 'medium', output_format: 'png', action: 'auto' }]);
+  assert.equal(bodies.anthropic[0].tools, undefined);
+  // Reviewer received the actual image bytes.
+  assert.ok(bodies.anthropic[0].messages[0].content.some((c) => c.type === 'image' && c.source.data === PNG));
+  // The refinement received the previous image to edit.
+  assert.ok(bodies.openai[1].input[0].content.some((c) => c.type === 'input_image' && c.image_url.endsWith(PNG)));
+
+  const data = await loadConversation(conversationId);
+  const outs = data.messages.filter((m) => m.kind === 'g_output');
+  assert.equal(outs[0].assets[0].operation, 'GENERATED');
+  assert.equal(outs[1].assets[0].operation, 'EDITED');
+  assert.equal(outs[1].assets[0].source_asset_id, outs[0].assets[0].asset_id); // version chain
+  assert.equal(data.assets.length, 2);
+  assert.match(data.assets[0].sha256, /^[0-9a-f]{64}$/);
+  const gOp = data.operations.find((o) => o.role === 'G');
+  assert.equal(gOp.usage.images, 1);
+  assert.ok(Math.abs(gOp.costUsd - ((1000 * 1.25 + 500 * 10) / 1e6 + 0.06)) < 1e-9); // tokens + one image fee
+});
+
+test('image generation: invalid JSON after drawing is fixed without drawing again', async () => {
+  await imageSetup();
+  bodies.openai.length = 0;
+  queues.openai.push(
+    { image: PNG, imageReply: 'Here is your cat!' },                                   // image ok, text not JSON
+    { protocol_version: '1.0', summary: 'cat', response: 'A cat.' },                    // corrective retry
+  );
+  queues.anthropic.push(R([], 'NO_MATERIAL_ISSUES'));
+  const { runId, conversationId } = await orch.submitPrompt({ prompt: 'draw a cat', capUsd: 5, tools: { image_generation: true, web_search: false } });
+  const run = await settle(runId);
+  assert.equal(run.completionReason, CR.NO_MATERIAL_ISSUES);
+  assert.equal(bodies.openai[1].tools, undefined); // retry is not offered the image tool
+  assert.match(JSON.stringify(bodies.openai[1].input), /has been kept/);
+  const data = await loadConversation(conversationId);
+  assert.equal(data.assets.length, 1); // the first image was kept, nothing redrawn
+  assert.equal(data.messages.find((m) => m.kind === 'g_output').assets.length, 1);
+});
+
+test('image generation: a Reviewer that cannot read images stops with a clear message', async () => {
+  await imageSetup('claude-test'); // no image input detected for this model
+  queues.openai.push({ image: PNG, imageReply: { protocol_version: '1.0', summary: 'cat', response: 'A cat.' } });
+  const { runId } = await orch.submitPrompt({ prompt: 'draw a cat', capUsd: 5, tools: { image_generation: true, web_search: false } });
+  const run = await settle(runId);
+  assert.equal(run.state, S.FAILED);
+  assert.match(run.failure.message, /^Reviewer · Anthropic claude-test: the answer contains generated image\(s\), but this model cannot read images/);
+  await orch.abandon(runId);
 });
 
 test('missing pricing fails pre-flight with PRICING action; proceeding unenforced works (FR-081)', async () => {

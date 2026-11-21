@@ -53,6 +53,20 @@ Notes and limits:
 - **Anthropic `pause_turn` is not resumed yet.** If Claude's server-side search loop pauses, the operation fails with the raw stop reason, and Retry runs it again.
 - **Gemini's search price ($14 per 1,000) comes from a secondary source.** Verify it against Google's pricing page. OpenAI and Anthropic are $10 per 1,000.
 
+## Added beyond spec v1.8: image generation (OpenAI)
+
+The product owner approved this on 2026-11-21. It builds on spec §8 (assets) and FR-073/074.
+
+| Decision | Implementation |
+|---|---|
+| The Generator may create or edit images with OpenAI's built-in `image_generation` tool; the model decides when | `image_generation` in `tools.json` (Generator only, **off by default**, about $0.06 per image estimated) |
+| Images are checked and stored as PeerMind assets | `decodeImages` (file signature decides the type; PNG/JPEG/WebP/GIF only; ≤ 20 MiB; SHA-256); `GENERATED`, or `EDITED` with `source_asset_id` on refinement |
+| The Reviewer reviews the actual image | Image bytes are sent as image input; a Reviewer model without image input stops with a clear message |
+| A refinement edits the previous image | The previous image is attached to the refine request; the tool's `action: auto` lets the model edit it |
+| A format retry never redraws (or re-bills) the image | The image from the invalid attempt is kept; the corrective retry is sent without image tools |
+
+Per-tool prompt rules (`instructions`), allowed roles (`roles`) and budget assumptions (`expectedCallsPerRequest`) now live in `tools.json` too.
+
 ## Not built yet
 
 | Area | Spec | Notes |
@@ -60,7 +74,7 @@ Notes and limits:
 | **MV3 PoC (all 11 criteria)** | §16.1 | Must happen before technical design approval. `background/keepalive.js` pings an extension API every 20 s during calls. Whether that survives the 180 s and 300 s silent waits on Brave and Chrome is unproven. Replace it with an offscreen document if it doesn't. |
 | Import (ZIP validation, size limits, imported decisions forced to pending) | §8.3, §9.6, §15.2, FR-058–060 | Limits are defined in `constants.js`; the importer is not written. |
 | Structured memory (extraction, summarisation, Memory panel) | §4.2–4.4, FR-061–064, FR-088 | `memory.json` is exported empty. There are no background model operations yet, so the budget reserve has nothing to add for them. |
-| Image generation and editing | FR-073–074 | Only user-attached images are handled. |
+| Image generation with Gemini | FR-073 | OpenAI's `image_generation` tool is built. Gemini draws with dedicated image *models* (image output switched on), not a tool, so it needs a small adapter option. |
 | Reusing a recorded result after a worker restart | §5.6 | A result recorded before the worker died is marked SUCCEEDED, but its step is re-run on resume instead of reusing the result. |
 | PAUSED_WAITING_FOR_USER | §5.3 | The state and its transitions exist, but nothing enters it yet. Pre-flight problems (keys, pricing, disclosure) use FAILED with a `pendingAction`. |
 | Published JSON Schemas | §B.3 | Validation is hand-written in `core/`. The schema files still need publishing. |

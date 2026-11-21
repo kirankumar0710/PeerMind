@@ -124,17 +124,19 @@ test('Gemini: grounding chunks become sources; query count used for search fees'
   assert.equal(r.usage.webSearches, 2);
 });
 
-test('search fees are part of cost and of the budget reserve', () => {
-  const p = { inputPerMTok: 3, outputPerMTok: 15, perSearchUsd: ws('anthropic', 'claude-sonnet-4-5').pricePerCall };
-  assert.equal(p.perSearchUsd, 0.01);
-  assert.equal(costUsd(p, 0, 0, 3), 0.03);
-  assert.equal(checkReserve({ capUsd: 0.04, spentUsd: 0, enforced: true, items: [{ pricing: p, inputTokens: 0, outputTokens: 0, webSearches: 5 }] }).ok, false);
+test('tool fees are part of cost and of the budget reserve', () => {
+  const p = { inputPerMTok: 3, outputPerMTok: 15, toolFees: { web_search: ws('anthropic', 'claude-sonnet-4-5').pricePerCall } };
+  assert.equal(p.toolFees.web_search, 0.01);
+  assert.equal(costUsd(p, 0, 0, { web_search: 3 }), 0.03);
+  assert.equal(checkReserve({ capUsd: 0.04, spentUsd: 0, enforced: true, items: [{ pricing: p, inputTokens: 0, outputTokens: 0, toolCalls: { web_search: 5 } }] }).ok, false);
 });
 
-test('search rules are added to the system prompt only when web search is on', () => {
+test('tool instructions come from tools.json and are added only for the tools offered', () => {
   const base = { kind: 'G_INITIAL', prompt: 'p', images: [], windowTokens: 100_000, maxOutputTokens: 1000 };
   assert.doesNotMatch(buildRequest(base).system, /web search tool/);
-  assert.match(buildRequest({ ...base, webSearch: true }).system, /web search tool/);
-  const r = buildRequest({ ...base, kind: 'R_REVIEW', webSearch: true, latestOutput: 'x', currentOpen: [], resolved: [], earlierUnresolved: [] });
+  const gInstr = toolsForModel(registry, 'openai', 'gpt-5.1', 'G').map((t) => t.instructions.G);
+  assert.match(buildRequest({ ...base, toolInstructions: gInstr }).system, /web search tool/);
+  const rInstr = toolsForModel(registry, 'anthropic', 'claude-opus-5-5', 'R').map((t) => t.instructions.R);
+  const r = buildRequest({ ...base, kind: 'R_REVIEW', toolInstructions: rInstr, latestOutput: 'x', currentOpen: [], resolved: [], earlierUnresolved: [] });
   assert.match(r.system, /fact-check/);
 });

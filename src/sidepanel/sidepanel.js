@@ -4,13 +4,14 @@ import { loadConversation } from '../storage/db.js';
 import { buildExportZip } from '../export/export.js';
 import { summarizeUsage, hasPricing } from '../core/budget.js';
 import { defaultPricing } from '../providers/pricing.js';
+import { renderMarkdown } from './markdown.js';
 import {
   RunState as S, CompletionReason as CR, DISCLOSURE_TEXT, DISCLOSURE_VERSION, ITERATION_LIMIT, ReviewStatus, OpState,
 } from '../core/constants.js';
 import { bytesToBase64, MEDIA_EXT } from '../core/util.js';
 
 const ui = {
-  tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '', newTools: {},
+  tab: 'run', app: null, convId: null, data: null, attachments: [], promptDraft: '', newTools: {}, outputView: 'formatted', blobUrls: new Map(),
   error: null, thinkingOp: null, settingsDraft: null, settingsNotice: null, saveStatus: null, models: {}, modelErrors: {}, modelsLoading: new Set(), providerMsg: {},
 };
 
@@ -77,6 +78,11 @@ async function refresh({ background = false } = {}) {
     ui.app = await send('getState');
     if (ui.app.focusConversation) { ui.convId = ui.app.focusConversation; ui.tab = 'run'; }
     if (ui.convId && !ui.app.conversations.some((c) => c.id === ui.convId)) ui.convId = null;
+    if (ui.blobConvId !== ui.convId) { // release image object URLs of the previous conversation
+      for (const url of ui.blobUrls.values()) URL.revokeObjectURL(url);
+      ui.blobUrls.clear();
+      ui.blobConvId = ui.convId;
+    }
     ui.data = ui.convId ? await loadConversation(ui.convId) : null;
   } catch (e) {
     ui.error = e.message;
@@ -198,11 +204,13 @@ function renderRun() {
       const outRun = d.runs.find((r) => r.id === outMsg.runId);
       parts.push(h('section', { class: 'card' },
         h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Latest output'),
+          h('button', { title: 'Switch between formatted and plain text', onclick: () => { ui.outputView = ui.outputView === 'formatted' ? 'plain' : 'formatted'; render(); } },
+            ui.outputView === 'formatted' ? 'Plain text' : 'Formatted'),
           h('button', { onclick: () => navigator.clipboard.writeText(outMsg.text) }, 'Copy Final Output')),
         h('div', { class: 'small muted', style: 'margin-bottom:6px' }, `For prompt: ${outRun.prompt || '(image only)'}`),
         h('div', { class: 'row', style: 'margin-bottom:6px' }, outRun.state === S.FINISHED || outRun.reviewStatus ? reviewPill(outRun)
           : h('span', { class: `pill ${outRun.latestOutputReviewed ? 'info' : 'warn'}` }, outRun.latestOutputReviewed ? 'reviewed, run in progress' : 'awaiting review')),
-        h('div', { class: 'output' }, outMsg.text || '(empty response)'),
+        outputCanvas(outMsg.text, outMsg.assets),
         sourcesList(outMsg.sources),
         (outRun.downgradeDependencies || []).length ? h('div', { class: 'small' }, h('h3', {}, 'Severity downgrades this completion depends on'),
           ...outRun.downgradeDependencies.map((dg) => h('div', {}, `${dg.finding_id}: ${dg.from} → ${dg.to} — ${dg.reason}`))) : null));
@@ -314,13 +322,13 @@ const opLabel = (o) => `${OP_LABEL[o.kind] || o.kind}${o.corrective ? ' (format 
 
 function iterationsCard(d) {
   const items = d.messages.map((m) => {
-    if (m.kind === 'user') return h('details', {}, h('summary', {}, `User message · ${time(m.createdAt)}`), h('div', { class: 'output' }, m.text || '(image only)'), m.assetIds?.length ? h('div', { class: 'small muted' }, m.assetIds.join(', ')) : null);
+    if (m.kind === 'user') return h('details', {}, h('summary', {}, `User message · ${time(m.createdAt)}`), outputCanvas(m.text || '', (m.assetIds || []).map((asset_id) => ({ asset_id })), { compact: true }));
     if (m.kind === 'g_output') {
       return h('details', {}, h('summary', {}, h('span', { class: 'role-g' }, m.refinementNo ? `Refine message ${m.refinementNo}` : 'Initial response'), ` · ${m.summary}`),
         m.decisions?.length ? h('table', {},
           h('thead', {}, h('tr', {}, h('th', {}, 'Finding'), h('th', {}, 'Decision'), h('th', {}, 'Reason'))),
           h('tbody', {}, m.decisions.map((x) => h('tr', {}, h('td', {}, x.finding_id), h('td', {}, DECISION_LABEL[x.decision] || x.decision), h('td', {}, x.reason))))) : null,
-        h('div', { class: 'output' }, m.text),
+        outputCanvas(m.text, m.assets, { compact: true }),
         sourcesList(m.sources));
     }
     if (m.kind === 'r_report') {
@@ -339,13 +347,57 @@ function timelineCard(d) {
     h('summary', {}, h('span', { class: o.role === 'G' ? 'role-g' : 'role-r' }, opLabel(o)), ` · ${providerLabel(o.provider)} ${o.model} · ${time(o.startedAt)} · `,
       h('span', { class: `pill ${o.state === OpState.SUCCEEDED ? 'ok' : o.state === OpState.IN_PROGRESS ? 'info' : 'bad'}` }, o.state),
       o.state === OpState.IN_PROGRESS && ui.thinkingOp === o.id ? h('span', { class: 'thinking small' }, ' Thinking') : null),
-    h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'}${o.usage?.webSearches ? ` · ${o.usage.webSearches} web search${o.usage.webSearches === 1 ? '' : 'es'}` : ''} · cost ${money(o.costUsd)}`),
+    h('div', { class: 'small' }, `Sent to: ${providerLabel(o.provider)} · tokens in ${o.usage?.inputTokens ?? 'n/a'} / out ${o.usage?.outputTokens ?? 'n/a'}${o.usage?.webSearches ? ` · ${o.usage.webSearches} web search${o.usage.webSearches === 1 ? '' : 'es'}` : ''}${o.usage?.images ? ` · ${o.usage.images} image${o.usage.images === 1 ? '' : 's'} generated` : ''} · cost ${money(o.costUsd)}`),
     o.error ? h('div', { class: 'small error' }, o.error.message || (o.error.errors || []).join(' ')) : null,
     h('details', {}, h('summary', { class: 'small' }, 'Context sent'), h('pre', {}, JSON.stringify(o.contextSent, null, 2))),
     o.partial && o.state !== OpState.SUCCEEDED ? h('details', {}, h('summary', { class: 'small' }, 'Partial output'), h('pre', {}, o.partial)) : null));
   return h('section', { class: 'card' }, h('h2', {}, 'Timeline'), rows,
     h('h3', {}, 'Usage by role'),
     ...usage.byRole.map((r) => h('div', { class: 'small' }, `${ROLE_LABEL[r.role] || r.role} · ${providerLabel(r.provider)}: ${r.inputTokens} in / ${r.outputTokens} out · ${r.costIncomplete && !r.costUsd ? 'Not available' : money(r.costUsd)}`)));
+}
+
+/**
+ * Output canvas: the response rendered as safe Markdown (or plain text), followed by any images
+ * PeerMind stored for it (user attachments now; generated images later). Only PeerMind's own
+ * stored assets are displayed as images; nothing is loaded from the network.
+ */
+function outputCanvas(text, assets = [], { compact = false } = {}) {
+  const body = ui.outputView === 'plain'
+    ? h('div', { class: 'canvas-plain' }, text || '')
+    : h('div', { class: 'canvas-md' }, renderMarkdown(text || ''));
+  if (!text && !assets?.length) body.append('(empty response)');
+  const images = (assets || []).map((a) => assetRecord(a.asset_id)).filter(Boolean);
+  return h('div', { class: `canvas${compact ? ' compact' : ''}` },
+    text ? body : null,
+    images.length ? h('div', { class: 'canvas-images' }, images.map((rec) => {
+      const url = blobUrl(rec);
+      return h('figure', {},
+        h('img', { src: url, alt: rec.asset_id, title: 'Click to enlarge', onclick: () => showImage(rec) }),
+        h('figcaption', { class: 'small muted' }, `${rec.asset_id}${rec.operation === 'EDITED' && rec.source_asset_id ? ` (edited from ${rec.source_asset_id})` : rec.operation === 'GENERATED' ? ' (generated)' : ''} · ${Math.round(rec.byte_length / 1024)} KB`));
+    })) : null);
+}
+
+const assetRecord = (id) => ui.data?.assets.find((a) => a.asset_id === id) || null;
+
+/** One object URL per stored asset, reused across re-renders. */
+function blobUrl(rec) {
+  const key = `${rec.conversationId}:${rec.asset_id}`;
+  if (!ui.blobUrls.has(key)) ui.blobUrls.set(key, URL.createObjectURL(new Blob([rec.bytes], { type: rec.media_type })));
+  return ui.blobUrls.get(key);
+}
+
+/** Full-size view with download. */
+function showImage(rec) {
+  const dlg = document.getElementById('dialog');
+  const url = blobUrl(rec);
+  dlg.onclose = null;
+  dlg.replaceChildren(
+    h('img', { src: url, alt: rec.asset_id, class: 'canvas-full' }),
+    h('div', { class: 'row', style: 'margin-top:8px' },
+      h('span', { class: 'grow small muted' }, `${rec.asset_id} · SHA-256 ${rec.sha256.slice(0, 12)}…`),
+      h('a', { href: url, download: `${rec.asset_id}.${MEDIA_EXT[rec.media_type] || 'img'}` }, h('button', {}, 'Download')),
+      h('button', { onclick: () => dlg.close() }, 'Close')));
+  dlg.showModal();
 }
 
 /** Clickable source links (http/https only), opened in a new tab. */

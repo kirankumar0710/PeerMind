@@ -144,10 +144,18 @@ const openai = {
         return [{ type: 'search' }, { type: 'content-reset' }];
       case 'response.output_text.annotation.added':
         return e.annotation?.type === 'url_citation' ? source(e.annotation.url, e.annotation.title, true) : [{ type: 'meta' }];
+      case 'response.output_item.done':
+        // A finished generated image. Text written before it was preamble, not the answer.
+        return e.item?.type === 'image_generation_call' && e.item.result
+          ? [{ type: 'image', id: e.item.id, base64: e.item.result }, { type: 'content-reset' }]
+          : [{ type: 'meta' }];
       case 'response.completed':
       case 'response.incomplete': {
         const u = e.response?.usage;
         return [
+          // The documented place for the final image; the transport ignores duplicates by id.
+          ...(e.response?.output || []).filter((o) => o?.type === 'image_generation_call' && o.result)
+            .map((o) => ({ type: 'image', id: o.id, base64: o.result })),
           { type: 'usage', inputTokens: u?.input_tokens ?? null, outputTokens: u?.output_tokens ?? null },
           { type: 'finish', reason: e.type === 'response.incomplete' ? (e.response?.incomplete_details?.reason || 'incomplete') : 'stop' },
         ];
@@ -155,7 +163,9 @@ const openai = {
       case 'response.failed':
       case 'error':
         return [{ type: 'error', message: rawStreamError(data) }];
-      default: return [{ type: 'meta' }];
+      default:
+        // Image generation progress (in_progress, generating, partial previews) proves liveness only.
+        return typeof e.type === 'string' && e.type.startsWith('response.image_generation_call.') ? [{ type: 'activity' }] : [{ type: 'meta' }];
     }
   },
 };

@@ -71,3 +71,29 @@ dialog::backdrop { background: rgb(0 0 0 / .35); }
 .save-bar > span:not(.grow) { text-align: right; font-weight: 600; max-width: 70%; }
 .thinking::after { content: "…"; animation: dots 1.2s steps(3) infinite; }
 @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
+
+/* Output canvas: formatted answer + stored images */
+.canvas { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; max-height: 70vh; overflow: auto; resize: vertical; }
+.canvas.compact { max-height: 40vh; padding: 6px 8px; }
+.canvas-plain { white-space: pre-wrap; word-wrap: break-word; }
+.canvas-md { line-height: 1.55; word-wrap: break-word; }
+.canvas-md > :first-child { margin-top: 0; }
+.canvas-md > :last-child { margin-bottom: 0; }
+.canvas-md p, .canvas-md ul, .canvas-md ol, .canvas-md blockquote { margin: 0 0 8px; }
+.canvas-md ul, .canvas-md ol { padding-left: 20px; }
+.canvas-md .md-h { margin: 12px 0 6px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.canvas-md h2.md-h { font-size: 15px; }
+.canvas-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 3px; }
+.canvas-md pre.md-code { margin: 0 0 8px; max-height: none; }
+.canvas-md pre.md-code code { border: 0; padding: 0; background: none; }
+.canvas-md blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--muted); }
+.canvas-md hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.canvas-md a { color: var(--accent); }
+.canvas-md .md-table { overflow-x: auto; margin: 0 0 8px; }
+.canvas-md .md-ext-image { font-size: 12px; }
+.canvas-images { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.canvas-images figure { margin: 0; max-width: 100%; }
+.canvas-images img { display: block; max-width: 100%; max-height: 360px; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; background: repeating-conic-gradient(var(--surface) 0 25%, var(--bg) 0 50%) 0 0 / 16px 16px; }
+.canvas.compact .canvas-images img { max-height: 120px; }
+.canvas-full { display: block; max-width: min(90vw, 1200px); max-height: 80vh; margin: 0 auto; }
+dialog:has(.canvas-full) { max-width: 95vw; }

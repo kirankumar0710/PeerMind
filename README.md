@@ -54,6 +54,8 @@ It creates `dist/peermind-<version>.zip` and the unzipped `dist/peermind-<versio
    - Click **Save settings**.
 5. Open **Run**, type a prompt and press **Start**.
 
+**Image generation (off by default).** Tick **Image generation** in the prompt box to let the Generator (OpenAI tool models) create images. The Reviewer receives the actual image, and refinements edit it. Every version is kept and can be enlarged or downloaded. Each image costs about $0.06 (estimate).
+
 **Web search (live information).** With **Web search** ticked in the prompt box (the default), the Generator and Reviewer can use their provider's built-in web search when a prompt needs current information. The Reviewer also uses it to fact-check. Sources are listed under the answer. Searches are billed per call by the provider (about $10–14 per 1,000) and count toward the conversation's budget cap. Untick the box to turn search off for that conversation.
 
 Reasoning support and image input are detected from the model name and shown under each role as information. For reasoning models, PeerMind requests progress signals automatically so that slow first responses stay within the timeouts (FR-092). The only choice is **Use extended thinking** on Claude models that support it. It is better on hard tasks, but slower and costs more.
@@ -76,7 +78,8 @@ Each vendor's built-in tools, such as web search, are described in **one data fi
 
 - **A vendor ships a new tool version or supports more models:** edit the variant's `request` or `models`. No code change is needed.
 - **Adding another tool of a kind PeerMind already displays** (`"result": "sources"`): add an entry. Its switch appears in the prompt box automatically.
-- **A tool with a new kind of result** (for example images): needs a small result handler in the adapters and UI.
+- **A tool with a new kind of result:** needs a small result handler in the code. Supported kinds are `sources` (web search) and `image` (image generation).
+- Each tool also sets `roles` (`G`, `R`), `defaultEnabled`, `expectedCallsPerRequest` (for the budget reserve) and `instructions` per role, which are added to the system prompt when the tool is offered.
 
 `npm test` checks the file. A bad regex, a missing price or an unknown result kind fails the build.
 

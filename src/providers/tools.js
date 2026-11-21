@@ -2,7 +2,8 @@
 // answers "which tools can this model use, and what do we send?". Pure functions over the parsed
 // registry, plus a cached loader for the extension.
 
-const RESULT_KINDS = ['sources']; // result kinds PeerMind knows how to display; others are rejected
+const RESULT_KINDS = ['sources', 'image']; // result kinds PeerMind knows how to handle; others are rejected
+const ROLES = ['G', 'R'];
 
 let cached = null;
 
@@ -42,20 +43,35 @@ export function compileRegistry(json) {
         return { ...v, modelsRe: re };
       });
     }
-    tools[id] = { id, label: t.label, description: t.description || '', result: t.result, defaultEnabled: t.defaultEnabled !== false, vendors };
+    const roles = t.roles ?? ROLES;
+    if (!Array.isArray(roles) || !roles.length || roles.some((r) => !ROLES.includes(r))) problems.push(`${id}: roles must be a non-empty list of "G" / "R"`);
+    const expected = t.expectedCallsPerRequest ?? 1;
+    if (!Number.isInteger(expected) || expected < 0) problems.push(`${id}: expectedCallsPerRequest must be a whole number >= 0`);
+    for (const [r, text] of Object.entries(t.instructions || {})) {
+      if (!ROLES.includes(r) || typeof text !== 'string') problems.push(`${id}: instructions must map "G"/"R" to text`);
+    }
+    tools[id] = {
+      id, label: t.label, description: t.description || '', result: t.result, defaultEnabled: t.defaultEnabled !== false,
+      roles, expectedCallsPerRequest: expected, instructions: t.instructions || {}, vendors,
+    };
   }
   if (problems.length) throw new Error(`tools.json is invalid: ${problems.join('; ')}`);
   return { pricesAsOf: json.pricesAsOf, vendorOptions: json.vendorOptions || {}, tools };
 }
 
-/** Every tool this vendor/model supports: [{ id, label, description, result, request, pricePerCall }]. */
-export function toolsForModel(registry, vendor, modelId) {
+/**
+ * Every tool this vendor/model supports (optionally only those a role may use):
+ * [{ id, label, description, result, defaultEnabled, roles, expectedCallsPerRequest, instructions, request, pricePerCall }].
+ */
+export function toolsForModel(registry, vendor, modelId, role = null) {
   const out = [];
   for (const t of Object.values(registry.tools)) {
+    if (role && !t.roles.includes(role)) continue;
     const variant = (t.vendors[vendor] || []).find((v) => v.modelsRe?.test(modelId));
     if (variant) {
       out.push({
         id: t.id, label: t.label, description: t.description, result: t.result, defaultEnabled: t.defaultEnabled,
+        roles: t.roles, expectedCallsPerRequest: t.expectedCallsPerRequest, instructions: t.instructions,
         request: structuredClone(variant.request), pricePerCall: variant.pricePerCall,
       });
     }
