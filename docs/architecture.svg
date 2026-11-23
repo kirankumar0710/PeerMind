@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1150" viewBox="0 0 1600 1150">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6b7280"/></marker></defs>
+<rect width="1600" height="1150" fill="#fafafa"/>
+<text x="40" y="46" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="24" font-weight="800" fill="#111827" text-anchor="start">PeerMind — subsystem overview</text>
+<text x="40" y="68" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#4b5563" text-anchor="start">Chromium MV3 side-panel extension · a Generator model drafts → a Reviewer model (different vendor) critiques it as findings → the Generator revises · plain ES modules</text>
+<rect x="40" y="90" width="1100" height="200" rx="14" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+<path d="M40 104 a14 14 0 0 1 14 -14 h1072 a14 14 0 0 1 14 14 v16 h-1100 z" fill="#2563eb"/>
+<text x="56" y="111" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">UI — side panel</text>
+<text x="1124" y="111" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/sidepanel/  sidepanel.js · markdown.js · .html/.css</text>
+<rect x="60" y="130" width="520" height="145" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="70" y="149" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">Run tab  (dashboard)</text>
+<text x="70" y="165" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Prompt box + tool toggles: Web search, Image generation</text>
+<text x="70" y="181" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Output: final answer (markdown.js), sources, image versions</text>
+<text x="70" y="197" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Findings list + iteration history (Generator ↔ Reviewer rounds)</text>
+<text x="70" y="213" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Metrics: timeline, tokens in/out per role, cost, spend vs cap</text>
+<text x="70" y="229" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Controls: Start · Stop · Retry · Resume · banners</text>
+<rect x="600" y="130" width="210" height="145" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="610" y="149" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">History tab</text>
+<text x="610" y="165" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Past conversations</text>
+<text x="610" y="181" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Reopen / delete</text>
+<text x="610" y="197" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Export archive (.zip)</text>
+<rect x="830" y="130" width="290" height="145" rx="8" fill="#ffffff" stroke="#2563eb" stroke-width="1.2"/>
+<text x="840" y="149" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">Settings tab  (admin)</text>
+<text x="840" y="165" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Provider API keys + Test</text>
+<text x="840" y="181" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Load models · pick Generator &amp; Reviewer</text>
+<text x="840" y="197" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Pricing (defaults / overrides)</text>
+<text x="840" y="213" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Iteration limit · budget cap · timeouts</text>
+<text x="840" y="229" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Privacy: data-disclosure ack</text>
+<line x1="590" y1="292" x2="590" y2="328" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<text x="604" y="314" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="500" fill="#4b5563" text-anchor="start" font-style="italic">chrome.runtime messages / ports  — commands ↓   state-change events ↑</text>
+<rect x="40" y="330" width="1100" height="150" rx="14" fill="#f5f3ff" stroke="#7c3aed" stroke-width="2"/>
+<path d="M40 344 a14 14 0 0 1 14 -14 h1072 a14 14 0 0 1 14 14 v16 h-1100 z" fill="#7c3aed"/>
+<text x="56" y="351" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Background — service worker</text>
+<text x="1124" y="351" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/background/</text>
+<rect x="60" y="370" width="330" height="95" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.2"/>
+<text x="70" y="389" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7c3aed" text-anchor="start">service-worker.js  (message router)</text>
+<text x="70" y="405" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• settings · keys · load models · tool support</text>
+<text x="70" y="421" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• submit / stop / retry / resume / delete</text>
+<text x="70" y="437" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• notifications when user action is needed</text>
+<rect x="410" y="370" width="520" height="95" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.2"/>
+<text x="420" y="389" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7c3aed" text-anchor="start">orchestrator.js  (run engine)</text>
+<text x="420" y="405" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Generator → Reviewer → Generator loop; PeerMind decides when done</text>
+<text x="420" y="421" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• pre-flight + budget reserve, global/conversation locks</text>
+<text x="420" y="437" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• persist every op/message/finding/asset · recover on startup</text>
+<rect x="950" y="370" width="170" height="95" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1.2"/>
+<text x="960" y="389" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#7c3aed" text-anchor="start">keepalive.js</text>
+<text x="960" y="405" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• keeps SW alive</text>
+<text x="960" y="421" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• during long calls</text>
+<line x1="590" y1="482" x2="590" y2="498" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="40" y="500" width="1100" height="130" rx="14" fill="#f8fafc" stroke="#475569" stroke-width="2"/>
+<path d="M40 514 a14 14 0 0 1 14 -14 h1072 a14 14 0 0 1 14 14 v16 h-1100 z" fill="#475569"/>
+<text x="56" y="521" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Core — pure logic (unit-tested)</text>
+<text x="1124" y="521" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/core/</text>
+<rect x="60" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="122.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">state-machine.js</text>
+<text x="122.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">run states,</text>
+<text x="122.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">transitions</text>
+<rect x="194" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="256.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">protocol.js</text>
+<text x="256.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">strict JSON check</text>
+<text x="256.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">of Generator output</text>
+<rect x="328" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="390.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">findings.js</text>
+<text x="390.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">apply Reviewer</text>
+<text x="390.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">report · PM-F ids</text>
+<rect x="462" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="524.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">context.js</text>
+<text x="524.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">build prompts,</text>
+<text x="524.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">wrap untrusted</text>
+<rect x="596" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="658.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">budget.js</text>
+<text x="658.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">cost, reserve,</text>
+<text x="658.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">usage summary</text>
+<rect x="730" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="792.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">images.js</text>
+<text x="792.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">sniff type,</text>
+<text x="792.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">size limits</text>
+<rect x="864" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="926.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">constants.js</text>
+<text x="926.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">enums, limits,</text>
+<text x="926.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">timeouts</text>
+<rect x="998" y="540" width="124" height="75" rx="8" fill="#fff" stroke="#475569" stroke-width="1.2"/>
+<text x="1060.0" y="562" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#475569" text-anchor="middle">util.js</text>
+<text x="1060.0" y="583" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">ids, sha256,</text>
+<text x="1060.0" y="599" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#374151" text-anchor="middle">base64</text>
+<line x1="590" y1="632" x2="590" y2="648" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="40" y="650" width="1100" height="180" rx="14" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+<path d="M40 664 a14 14 0 0 1 14 -14 h1072 a14 14 0 0 1 14 14 v16 h-1100 z" fill="#d97706"/>
+<text x="56" y="671" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Tools &amp; routing</text>
+<text x="1124" y="671" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/providers/  tools.json · tools.js · pricing.js</text>
+<rect x="60" y="690" width="300" height="125" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1.2"/>
+<text x="70" y="709" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#d97706" text-anchor="start">Tool router  (tools.js)</text>
+<text x="70" y="724" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="start">registry: tools.json (data only)</text>
+<text x="70" y="740" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• toolsForModel(vendor, model, role)</text>
+<text x="70" y="756" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• first variant whose models regex</text>
+<text x="70" y="772" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">•   matches → request sent as-is</text>
+<text x="70" y="788" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• on/off per conversation and role</text>
+<rect x="375" y="690" width="260" height="125" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1.2"/>
+<text x="385" y="709" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#d97706" text-anchor="start">web_search</text>
+<text x="385" y="724" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="start">default ON</text>
+<text x="385" y="740" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Generator + Reviewer (fact-checks)</text>
+<text x="385" y="756" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• OpenAI · Anthropic · Gemini</text>
+<text x="385" y="772" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• ~$0.010–0.014 / call</text>
+<text x="385" y="788" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• result → sources list</text>
+<rect x="650" y="690" width="260" height="125" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1.2"/>
+<text x="660" y="709" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#d97706" text-anchor="start">image_generation</text>
+<text x="660" y="724" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="start">default OFF</text>
+<text x="660" y="740" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• Generator only; Reviewer sees image</text>
+<text x="660" y="756" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• OpenAI only (gpt-4o / 4.1 / 5+ / o3)</text>
+<text x="660" y="772" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• ~$0.06 / image</text>
+<text x="660" y="788" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• result → image (edit on refine)</text>
+<rect x="925" y="690" width="195" height="125" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1.2"/>
+<text x="935" y="709" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#d97706" text-anchor="start">pricing.js</text>
+<text x="935" y="725" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• default $/token per</text>
+<text x="935" y="741" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">•   model, &quot;as of&quot; date</text>
+<text x="935" y="757" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• user overrides from</text>
+<text x="935" y="773" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">•   Settings</text>
+<line x1="590" y1="832" x2="590" y2="848" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="40" y="850" width="1100" height="150" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
+<path d="M40 864 a14 14 0 0 1 14 -14 h1072 a14 14 0 0 1 14 14 v16 h-1100 z" fill="#059669"/>
+<text x="56" y="871" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Adapters — vendor API calls</text>
+<text x="1124" y="871" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/providers/  adapters.js · transport.js</text>
+<rect x="60" y="890" width="245" height="95" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.2"/>
+<text x="70" y="909" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#059669" text-anchor="start">openai</text>
+<text x="70" y="925" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• list models · capabilities</text>
+<text x="70" y="941" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• POST /v1/responses</text>
+<rect x="320" y="890" width="245" height="95" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.2"/>
+<text x="330" y="909" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#059669" text-anchor="start">anthropic</text>
+<text x="330" y="925" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• list models · capabilities</text>
+<text x="330" y="941" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• POST /v1/messages</text>
+<rect x="580" y="890" width="245" height="95" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.2"/>
+<text x="590" y="909" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#059669" text-anchor="start">google (Gemini)</text>
+<text x="590" y="925" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• list models · capabilities</text>
+<text x="590" y="941" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• :streamGenerateContent?alt=sse</text>
+<rect x="840" y="890" width="280" height="95" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1.2"/>
+<text x="850" y="909" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#059669" text-anchor="start">transport.js</text>
+<text x="850" y="925" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• streamCall (SSE) · jsonCall</text>
+<text x="850" y="941" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• timeouts, abort, ProviderError</text>
+<text x="850" y="957" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• redact keys · collect sources</text>
+<line x1="182" y1="987" x2="182" y2="1043" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="60" y="1045" width="245" height="58" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="182" y="1069" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="700" fill="#374151" text-anchor="middle">OpenAI API</text>
+<text x="182" y="1088" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="middle">api.openai.com</text>
+<line x1="442" y1="987" x2="442" y2="1043" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="320" y="1045" width="245" height="58" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="442" y="1069" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="700" fill="#374151" text-anchor="middle">Anthropic API</text>
+<text x="442" y="1088" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="middle">api.anthropic.com</text>
+<line x1="702" y1="987" x2="702" y2="1043" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="580" y="1045" width="245" height="58" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="702" y="1069" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="700" fill="#374151" text-anchor="middle">Google Gemini API</text>
+<text x="702" y="1088" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#6b7280" text-anchor="middle">generativelanguage.googleapis.com</text>
+<text x="850" y="1080" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="500" fill="#6b7280" text-anchor="start" font-style="italic">HTTPS + API keys (host_permissions in manifest.json)</text>
+<rect x="1190" y="90" width="370" height="270" rx="14" fill="#ecfeff" stroke="#0891b2" stroke-width="2"/>
+<path d="M1190 104 a14 14 0 0 1 14 -14 h342 a14 14 0 0 1 14 14 v16 h-370 z" fill="#0891b2"/>
+<text x="1206" y="111" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Storage</text>
+<text x="1544" y="111" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/storage/</text>
+<rect x="1205" y="130" width="340" height="135" rx="8" fill="#ffffff" stroke="#0891b2" stroke-width="1.2"/>
+<text x="1215" y="149" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#0891b2" text-anchor="start">db.js  — IndexedDB &quot;peermind&quot;</text>
+<text x="1215" y="165" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• conversations · runs · operations</text>
+<text x="1215" y="181" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• messages · findings · assets (images)</text>
+<text x="1215" y="197" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• meta (global lock)</text>
+<text x="1215" y="213" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• writes: service worker only · UI reads</text>
+<rect x="1205" y="275" width="340" height="70" rx="8" fill="#ffffff" stroke="#0891b2" stroke-width="1.2"/>
+<text x="1215" y="294" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#0891b2" text-anchor="start">settings.js</text>
+<text x="1215" y="310" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• settings → chrome.storage.local</text>
+<text x="1215" y="326" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• API keys → chrome.storage.session only</text>
+<rect x="1190" y="380" width="370" height="140" rx="14" fill="#fdf2f8" stroke="#db2777" stroke-width="2"/>
+<path d="M1190 394 a14 14 0 0 1 14 -14 h342 a14 14 0 0 1 14 14 v16 h-370 z" fill="#db2777"/>
+<text x="1206" y="401" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Export</text>
+<text x="1544" y="401" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/export/</text>
+<rect x="1205" y="420" width="340" height="90" rx="8" fill="#ffffff" stroke="#db2777" stroke-width="1.2"/>
+<text x="1215" y="439" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#db2777" text-anchor="start">export.js + zip.js</text>
+<text x="1215" y="455" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• conversation → archive JSON + assets</text>
+<text x="1215" y="471" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• dependency-free ZIP writer (CRC32)</text>
+<text x="1215" y="487" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• triggered from the History tab</text>
+<rect x="1190" y="540" width="370" height="110" rx="14" fill="#f1f5f9" stroke="#64748b" stroke-width="2"/>
+<path d="M1190 554 a14 14 0 0 1 14 -14 h342 a14 14 0 0 1 14 14 v16 h-370 z" fill="#64748b"/>
+<text x="1206" y="561" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Browser compat</text>
+<text x="1544" y="561" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">src/compat/</text>
+<rect x="1205" y="578" width="340" height="60" rx="8" fill="#ffffff" stroke="#64748b" stroke-width="1.2"/>
+<text x="1215" y="597" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#64748b" text-anchor="start">browser.js</text>
+<text x="1215" y="613" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• side panel · notifications · Chromium ≥116</text>
+<text x="1215" y="629" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• used by the service worker</text>
+<rect x="1190" y="660" width="370" height="443" rx="14" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+<path d="M1190 674 a14 14 0 0 1 14 -14 h342 a14 14 0 0 1 14 14 v16 h-370 z" fill="#dc2626"/>
+<text x="1206" y="681" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#fff" text-anchor="start">Package &amp; tooling</text>
+<text x="1544" y="681" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="500" fill="#fff" text-anchor="end">tools/ · test/</text>
+<rect x="1205" y="700" width="340" height="72" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.2"/>
+<text x="1215" y="719" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#dc2626" text-anchor="start">create_package.sh</text>
+<text x="1215" y="735" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• npm install → test → compat → zip → unzip</text>
+<text x="1215" y="751" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• --skip-checks: zip + unzip only</text>
+<rect x="1205" y="782" width="340" height="120" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.2"/>
+<text x="1215" y="801" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#dc2626" text-anchor="start">tools/</text>
+<text x="1215" y="817" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• package.mjs → dist/peermind-&lt;ver&gt;.zip</text>
+<text x="1215" y="833" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">•   + SHA-256 (fixed timestamp, reproducible)</text>
+<text x="1215" y="849" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• check-compat.mjs (no browser branching)</text>
+<text x="1215" y="865" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• make-icons.py → icons/icon{16..128}.png</text>
+<rect x="1205" y="912" width="340" height="72" rx="8" fill="#ffffff" stroke="#dc2626" stroke-width="1.2"/>
+<text x="1215" y="931" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#dc2626" text-anchor="start">test/  (node --test)</text>
+<text x="1215" y="947" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">• unit tests + end-to-end orchestrator</text>
+<text x="1215" y="963" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#1f2937" text-anchor="start">•   with stubbed providers (fake-indexeddb)</text>
+<rect x="1205" y="994" width="340" height="94" rx="8" fill="#fff" stroke="#dc2626" stroke-width="1.2" stroke-dasharray="5 4"/>
+<text x="1215" y="1014" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#dc2626" text-anchor="start">Output</text>
+<text x="1215" y="1034" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="400" fill="#374151" text-anchor="start">dist/peermind-&lt;ver&gt;/ (manifest, icons, src)</text>
+<text x="1215" y="1054" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#374151" text-anchor="start">Load unpacked in Brave (primary) or Chrome</text>
+<text x="1215" y="1072" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#374151" text-anchor="start">One package serves both browsers</text>
+<line x1="1142" y1="210" x2="1188" y2="210" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)" stroke-dasharray="4 3"/>
+<text x="1165" y="202" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="500" fill="#4b5563" text-anchor="middle" font-style="italic">read</text>
+<line x1="1142" y1="345" x2="1188" y2="345" stroke="#6b7280" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="1165" y="337" font-family="-apple-system,Helvetica,Arial,sans-serif" font-size="11" font-weight="500" fill="#4b5563" text-anchor="middle" font-style="italic">persist</text>
+</svg>

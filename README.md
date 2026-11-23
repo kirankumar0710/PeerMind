@@ -1,11 +1,28 @@
-# PeerMind
-A browser extension for cross-vendor AI peer review: generate, critique, and iteratively refine responses.
+<p align="center">
+  <img src="icons/icon128.png" width="96" height="96" alt="PeerMind icon">
+</p>
 
-A Generator model (G) from one vendor drafts an answer. A Reviewer model (R) from a different vendor critiques it as structured findings. G must decide on every open finding and send back a full revision. PeerMind, not either model, decides when the loop is done. The product contract is the **PeerMind Functional Specification v1.8**. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for how the code maps to it and what is still open.
+<h1 align="center">PeerMind</h1>
+
+<p align="center">A browser extension for cross-vendor AI peer review: generate, critique, and iteratively refine responses.</p>
+
+A Generator model from one vendor drafts an answer. A Reviewer model from a different vendor critiques it as structured findings. The Generator must decide on every open finding and send back a full revision. PeerMind, not either model, decides when the loop is done. The product contract is the **PeerMind Functional Specification v1.8**. See [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) for how the code maps to it and what is still open.
 
 - Chromium Manifest V3 side-panel extension. Brave is the primary browser and Chrome is secondary. One package serves both.
 - Plain JavaScript (ES modules), HTML and CSS. There is no build step and no runtime dependencies.
 - Supported providers are OpenAI, Anthropic and Google Gemini, called through their first-party APIs with API keys.
+
+## Overview
+
+How a prompt flows through PeerMind, and how a review run works.
+
+![PeerMind overview](docs/overview.svg)
+
+## Architecture
+
+Every subsystem and the source files behind it.
+
+![PeerMind architecture](docs/architecture.svg)
 
 ## Build the package
 
